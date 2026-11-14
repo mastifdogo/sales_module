@@ -562,6 +562,7 @@ async function docView(kind, id) {
 		const f = await api(`${path}/pdf`);
 		saveBase64(f.filename, f.content_type, f.content_base64);
 	}));
+	if (doc.pdf_url) actions.push(h("a", { class: "button", href: doc.pdf_url, target: "_blank", rel: "noopener", title: "The PDF as last issued or emailed, in Ledger's Documents" }, "Filed PDF"));
 	if (isInvoice && doc.status === "open") actions.push(act("Record payment", () => paymentDialog(doc, reload)));
 	actions.push(h("span", { class: "spacer" }));
 	actions.push(act("Duplicate", async () => {
@@ -708,7 +709,7 @@ async function sendDialog(doc, settings, done) {
 		h(
 			"p",
 			{ class: "hint" },
-			`The ${K.label.toLowerCase()} PDF is attached. Sent from ${settings.email.from}${settings.email.via === "gmail" ? " (Gmail)" : ""}${settings.bcc_self ? ", with a copy to you" : ""}.`,
+			`The ${K.label.toLowerCase()} PDF is attached. Sent from ${settings.email.from}${settings.bcc_self ? ", with a copy to you" : ""}.`,
 			draftInvoice ? " Sending issues the draft first." : doc.status === "draft" ? " It will be marked as sent." : "",
 		),
 		h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Send"), h("button", { type: "button", onclick: closeDialog }, "Cancel")),
@@ -1586,9 +1587,9 @@ async function setupView() {
 			{},
 			h("legend", {}, "Email"),
 			em.ready
-				? h("p", {}, em.via === "gmail" ? `Sending through Ledger's Gmail account (${em.from}).` : `Sending through your mail server as ${em.from}.`)
+				? h("p", {}, em.via === "mail" ? `Sending through Ledger's mailbox (${em.from}).` : `Sending through Sales' own mail server settings as ${em.from}. Ledger now has a shared mailbox (Settings → Mail) that works with any mail provider; switch to it in the form above when it's connected.`)
 				: h("p", { style: "color:var(--warn)" }, em.problem),
-			h("p", { class: "hint" }, "Choose Gmail or your own mail server in the form above. Gmail is connected, and Sales allowed to send, under ", h("a", { href: "/settings/gmail", target: "_top" }, "Settings → Gmail"), "."),
+			h("p", { class: "hint" }, "Ledger's mailbox is connected, and Sales allowed to send, under ", h("a", { href: "/settings/mail", target: "_top" }, "Settings → Mail"), "."),
 			h("div", { class: "actions" }, h("button", { type: "button", disabled: !em.ready, onclick: (e) => busy(e.currentTarget, testEmail) }, "Send a test email")),
 		),
 		h("fieldset", {}, h("legend", {}, "Numbering"), numbering),

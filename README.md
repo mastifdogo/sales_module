@@ -26,9 +26,13 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
 - **keep customer records**: contact details, billing address, Cc addresses,
   currency, payment terms, taxes, notes, balance owing and every document
   sent to them
-- **email PDFs** through Ledger's shared Gmail account, or your own mail
-  server (SMTP: Microsoft 365, Fastmail, iCloud, Zoho, a local relay…), with
+- **email PDFs** through Ledger's shared mailbox (Settings → Mail: any
+  IMAP/SMTP account, Proton Mail through its Bridge, or Gmail), with
   editable messages and a log of every send
+- **file PDFs in Ledger's Documents**: when an invoice is issued, and each
+  time an invoice, quote or estimate is emailed, its PDF is filed there
+  under the customer, one per document (the latest replaces the one before).
+  The document's page has a **Filed PDF** button that opens it.
 - **receive payments**: from a customer's page, enter what came in and it's
   spread over their open invoices, oldest first (you can change the split),
   and posted to the books. Partial payments are fine.
@@ -78,7 +82,7 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.16.0 or newer** (the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
+Needs **Ledger 0.19.0 or newer** (Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
 "+ New account…", journal entry links, settings per organization, plus the
 settings form, Gmail, search and user roles from earlier versions). In
 Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
@@ -104,6 +108,11 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.8.0**: PDFs are filed in Ledger's Documents when issued or emailed
+  (a **Filed PDF** button opens the one on file). Mail goes through
+  Ledger's shared mailbox under Settings → Mail, whatever provider it is;
+  if you used "Ledger's Gmail account", nothing changes for you. Needs
+  Ledger 0.19.0.
 - **0.7.0**: customers live in Ledger's shared list of customers and
   vendors (Ledger 0.16.0). After upgrading, the Customers tab (and a
   dashboard to-do) shows the customers kept only in Sales and what moving
@@ -148,8 +157,8 @@ documents, record payments and manage customers; viewers can only look.
      quotes and estimates stay valid, the terms printed on them.
    - **Ledger posting** (optional): turn it on and enter the receivable,
      default revenue and bank account codes for each currency.
-   - **Email**: *Ledger's Gmail account* (the default) or *My own mail
-     server* with its SMTP details.
+   - **Email**: *Ledger's mailbox* (the default). *Sales' own mail server
+     settings* remain for setups from before Ledger had a mailbox.
    - **Email messages**: subject and text for invoices and for
      quotes/estimates, with placeholders.
 2. Below that form on the same tab:
@@ -158,14 +167,15 @@ documents, record payments and manage customers; viewers can only look.
    - **Taxes**: GST is on. Click **Edit** on each tax you collect, turn it
      on, choose the account it's owed to (e.g. `2200 GST/HST payable`) and
      whether new lines get it by default.
-3. **Gmail** (if you use it): an admin connects the account under
-   **Settings → Gmail** and ticks **Sales** under "may send". Until then the
-   Email section says what's missing.
+3. **Mail**: an admin connects a mailbox under **Settings → Mail** and
+   ticks **Sales** under "may send". Until then the Email section says
+   what's missing.
 4. Under **Sales → Categories**, add your sales categories and the revenue
    account each goes to. Lines without a category use the default revenue
    account.
 
-For your own mail server:
+Sales' own mail server settings (older setups; new ones should connect the
+mailbox under Settings → Mail instead):
 
 | Provider | Server | Port / security | Password |
 |---|---|---|---|
@@ -224,7 +234,7 @@ server/documents.mjs    invoices, quotes, estimates (lines, posting, PDF, email)
 server/catalog.mjs      taxes and categories
 server/customers.mjs    customers
 server/settings.mjs     settings for the page, numbering, test email, summary
-server/email.mjs        sending through ctx.gmail or SMTP
+server/email.mjs        sending through ctx.mail (or the older own-SMTP settings)
 server/search.mjs       results for Ledger's search bar
 server/payments.mjs     receive payment, deposit matching (rules + ctx.llm)
 server/dashboard.mjs    notifications and to-dos on Ledger's dashboard

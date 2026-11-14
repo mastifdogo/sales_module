@@ -20,7 +20,7 @@ The API reference and the full workflow live in the Ledger repository.
   (`scripts/check.sh` does this for you).
 - Read **`<ledger>/docs/MODULE_LLM_CONTEXT.md`** in full before changing
   anything: manifest, `ctx` API and return shapes, `ctx.settings`,
-  `ctx.dashboard`, `ctx.llm`, `ctx.gmail`, `ctx.search`, roles, migrations,
+  `ctx.dashboard`, `ctx.llm`, `ctx.mail`, `ctx.documents`, `ctx.search`, roles, migrations,
   UI and security rules.
 - Then follow **`<ledger>/.claude/skills/ledger-module/SKILL.md`** (design
   rules, implementation rules, checks, publishing). Treat this repository as
@@ -41,9 +41,13 @@ feature the module uses (the context file says which version added what;
 - Money is integer cents per currency; post to the books only with
   `ctx.ledger.createJournalEntry(entry, req.user)`, with `links` to the
   record it came from (Ledger ≥ 0.11.2).
-- AI goes through `ctx.llm` and Gmail through `ctx.gmail` (Ledger ≥ 0.10.0):
-  no API keys, OAuth, IMAP or Apps Script bridges of the module's own for
-  those. The admin allows the module under Settings → LLM API / Gmail.
+- AI goes through `ctx.llm` (stay provider-neutral: never branch on the
+  provider or model, validate `json()` data) and mail through `ctx.mail`
+  (Ledger ≥ 0.18.3), not `ctx.gmail`: no API keys, OAuth, IMAP or SMTP of
+  the module's own for those. The admin allows the module under Settings →
+  LLM API / Mail.
+- Every PDF the module makes or receives is filed with `ctx.documents`
+  (Ledger ≥ 0.19.0); keep only its id.
 - Bad input answers 4xx (`throw new ctx.HttpError(422, "…")`), never 500.
 
 ## 3. Check before saying it works
@@ -93,7 +97,16 @@ payments to the books.
   `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
   `test/*.test.mjs` (`npm test`).
-- Needs Ledger ≥ 0.16.0. Customers live in Ledger's shared entities:
+- Needs Ledger ≥ 0.19.0. PDFs: `filePdf()` in `documents.mjs` files a
+  document's PDF in Ledger's PDF store (`ctx.documents.add`, origin
+  "created", kind "invoice" or "other", with the customer's entity) when an
+  invoice is issued and whenever a document is emailed, keeps the id in
+  `documents.pdf_document_id`, and removes the one it replaces: one stored
+  PDF per document. A 409 (same bytes already filed) reuses the document
+  the error names. It never fails the caller. `getDocument()` returns
+  `pdf_url` only if the stored document still exists (a restore or a person
+  may have removed it). Downloads are still rendered on request.
+- Customers live in Ledger's shared entities:
   `server/customer-store.mjs` adds, updates, adopts and moves them.
   `customers.entity_id` points at the entity, which holds name, email,
   phone, address and notes; Sales' row keeps company, cc_emails, tax_id,
@@ -115,8 +128,8 @@ payments to the books.
   the dry run reports bad rows as `errors` (they block the import) and skips
   names or emails already in Sales, or repeated, saying so in `summary`. The
   real run inserts in one statement that never doubles a name.
-- Sales keeps no files (PDFs are made on request), so it doesn't use
-  `ctx.storage` and has no `bytea` columns.
+- Sales keeps no other files, so it doesn't use `ctx.storage` and has no
+  `bytea` columns.
 - Customer lists: the manifest accepts `customer`
   files; `server/imports.mjs` reads them with `lib/csv.mjs` (the same rules
   as Ledger's reader, so `meta.header_row` lines up), previews who's new,
@@ -138,8 +151,12 @@ payments to the books.
   the email check) is `ui/setup.html`, shown under the form. The module's
   own `settings` table now only keeps the running numbers; values from
   before 0.2.0 are copied into Ledger's form once (`move-settings.mjs`).
-- Email: `ctx.gmail.send()` by default (an admin allows Sales under
-  Settings → Gmail), the module's own SMTP client when the user chooses it.
+- Email: `ctx.mail.send()` (Ledger's mailbox, any provider; an admin allows
+  Sales under Settings → Mail). The setting value is still `gmail` for that
+  choice. The module's own SMTP client (`lib/mail.mjs`, `email_via: smtp`)
+  is kept only so setups from before Ledger had a mailbox keep sending;
+  Ledger's rule is no SMTP of a module's own, so don't extend it, and remove
+  it once the user agrees.
 - Taxes, categories and numbering are admin-only (`requireAdmin`).
 - Payments: `server/payments.mjs` (receive payment over open invoices;
   deposit matching with rules, then `ctx.llm.json` with every answer checked

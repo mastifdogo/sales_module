@@ -181,6 +181,13 @@ export function documentRoutes(ctx, h, mail) {
 		const t = today();
 		doc.overdue = doc.kind === "invoice" && doc.status === "open" && doc.due_date < t;
 		doc.expired = doc.kind !== "invoice" && OPEN_QUOTE.includes(doc.status) && doc.due_date < t;
+		// Its PDF in Ledger's Documents, if it's (still) there: a restore or a
+		// person may have removed it.
+		doc.pdf_url = null;
+		if (doc.pdf_document_id !== null && ctx.documents) {
+			const filed = await ctx.documents.get(Number(doc.pdf_document_id)).catch(() => null);
+			if (filed) doc.pdf_url = ctx.documents.url(filed.id);
+		}
 		return doc;
 	}
 
@@ -262,6 +269,43 @@ export function documentRoutes(ctx, h, mail) {
 		}
 	}
 
+	/**
+	 * Files a document's PDF in Ledger's PDF store (Documents, Ledger ≥ 0.19.0)
+	 * and remembers its id. One stored PDF per document, the latest issued or
+	 * emailed: the one it replaces is removed. Never fails the caller.
+	 */
+	async function filePdf(doc, pdf, user) {
+		if (!ctx.documents) return;
+		try {
+			let id;
+			try {
+				const made = await ctx.documents.add(
+					{
+						kind: doc.kind === "invoice" ? "invoice" : "other",
+						origin: "created",
+						filename: pdfName(doc),
+						data: pdf,
+						title: `${KINDS[doc.kind].label} ${doc.number} · ${doc.customer.name}`.slice(0, 200),
+						doc_date: doc.issue_date,
+						...entityOf(doc),
+					},
+					user,
+				);
+				id = made.id;
+			} catch (e) {
+				// The same bytes are already filed: use that document.
+				const m = e.status === 409 ? /\(document (\d+)\)/.exec(e.message) : null;
+				if (!m) throw e;
+				id = Number(m[1]);
+			}
+			const prev = doc.pdf_document_id;
+			await q(`UPDATE ${T("documents")} SET pdf_document_id = $2 WHERE id = $1`, [String(doc.id), String(id)]);
+			if (prev !== null && prev !== undefined && String(prev) !== String(id)) await ctx.documents.remove(Number(prev)).catch(() => {});
+		} catch (e) {
+			ctx.log.warn("could not file the PDF in Ledger's documents", { document: String(doc.id), err: e.message });
+		}
+	}
+
 	/** Issues a draft invoice: locks it, posts it to the books when enabled, and marks it open. */
 	async function issueInvoice(did, user) {
 		const s = await loadSettings();
@@ -300,6 +344,8 @@ export function documentRoutes(ctx, h, mail) {
 			throw e;
 		}
 		ctx.log.info("invoice issued", { document: did, entry: entryId, user: user.username });
+		const issued = await getDocument(did);
+		await filePdf(issued, renderDocumentPdf(issued, s), user);
 		return getDocument(did);
 	}
 
@@ -583,6 +629,7 @@ ${paras}
 			if (isInvoice && doc.status === "draft") doc = await issueInvoice(did, req.user);
 
 			const recipients = [...to, ...cc].join(", ");
+			const pdf = renderDocumentPdf(doc, s);
 			try {
 				await mail.deliver(s, {
 					to,
@@ -591,7 +638,7 @@ ${paras}
 					subject,
 					text: message + "\n\n" + summaryRows(doc).map(([k, v]) => `${k}: ${v}`).join("\n") + "\n",
 					html: emailHtml(message, doc),
-					attachments: [{ filename: pdfName(doc), contentType: "application/pdf", content: renderDocumentPdf(doc, s) }],
+					attachments: [{ filename: pdfName(doc), contentType: "application/pdf", content: pdf }],
 				});
 			} catch (e) {
 				const msg = e instanceof ctx.HttpError ? e.message : `sending failed: ${e.message}`;
@@ -602,6 +649,8 @@ ${paras}
 			await q(`INSERT INTO ${T("email_log")} (document_id, recipients, subject, ok, sent_by) VALUES ($1, $2, $3, true, $4)`, [did, recipients, subject, req.user.username]);
 			await q(`UPDATE ${T("documents")} SET sent_at = now(), status = CASE WHEN kind <> 'invoice' AND status = 'draft' THEN 'sent' ELSE status END WHERE id = $1`, [did]);
 			ctx.log.info("document emailed", { document: did, kind, to: recipients, user: req.user.username });
+			// What was sent is what's on file.
+			await filePdf(await getDocument(did), pdf, req.user);
 			return getDocument(did);
 		});
 
