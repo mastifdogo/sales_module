@@ -17,12 +17,6 @@ const CONTACT = ["name", "email", "phone", "address", "notes"];
 export function customerStore(ctx, h) {
 	const { T, q, conflict, CUSTOMERS, loadSettings } = h;
 
-	/** Sales' row for an entity, if it has one. */
-	async function rowFor(entityId) {
-		const { rows } = await q(`SELECT id FROM ${T("customers")} WHERE entity_id = $1`, [String(entityId)]);
-		return rows[0]?.id ?? null;
-	}
-
 	/** A customer of Sales with this name (linked or not), any capitals. */
 	async function byName(name) {
 		const { rows } = await q(`SELECT id, name FROM ${CUSTOMERS} c WHERE lower(c.name) = lower($1) LIMIT 1`, [name]);
@@ -191,5 +185,5 @@ export function customerStore(ctx, h) {
 		return ids;
 	}
 
-	return { CONTACT, add, addMany, update, adopt, movePlan, move, byName };
+	return { CONTACT, add, addMany, update, adopt, movePlan, move };
 }

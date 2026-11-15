@@ -5,7 +5,7 @@ import { isEmail, parseAddressList } from "../lib/mail.mjs";
 import { customerStore } from "./customer-store.mjs";
 
 export function customerRoutes(ctx, h) {
-	const { T, q, bad, notFound, conflict, body, text, intIn, bool, currency, id, like, loadSettings, checkTaxIds, CUSTOMERS } = h;
+	const { T, q, bad, notFound, conflict, body, text, intIn, bool, currency, id, like, checkTaxIds, CUSTOMERS } = h;
 	const store = customerStore(ctx, h);
 
 	/** The form's fields split into what's shared in Ledger's list and what's Sales' own. */

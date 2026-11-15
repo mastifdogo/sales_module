@@ -376,9 +376,11 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 	]);
 	const editable = kind === "invoice" ? ["draft"] : ["draft", "sent"];
 	if (existing && !editable.includes(existing.status)) return go(docHref(existing));
-	if (customers.data.length === 0) {
+	if (customers.data.length === 0 && !existing) {
 		return render(h("h1", {}, `New ${K.label.toLowerCase()}`), h("p", {}, "Add a customer first. ", h("a", { class: "button primary", href: "#/customers/new" }, "+ New customer")));
 	}
+	// A draft for a customer archived since stays theirs: the list leaves archived customers out.
+	if (existing && !customers.data.some((c) => String(c.id) === String(existing.customer_id))) customers.data.push(await api(`/customers/${existing.customer_id}`));
 	const custById = new Map(customers.data.map((c) => [String(c.id), c]));
 	const catById = new Map(cats.data.map((c) => [String(c.id), c]));
 	const doc = existing ?? { customer_id: qs.get("customer") ?? "", issue_date: todayStr(), due_date: "", currency: "", po_number: "", notes: "", lines: [] };
@@ -510,7 +512,7 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 			"div",
 			{ class: "actions" },
 			h("button", { type: "button", onclick: () => (addLine(), recalc()) }, "+ Add line"),
-			kind === "invoice" && settings.billable_accounts?.length
+			kind === "invoice"
 				? h(
 						"button",
 						{
@@ -1775,11 +1777,13 @@ async function setupView(section) {
 
 // ---- start ----------------------------------------------------------------------------------------
 
-// Ledger's search bar and dashboard link to /apps/sales?open=invoices/31; the
-// value becomes this page's route.
+// Ledger's search bar and dashboard link to /apps/sales?open=invoices/31 (or
+// customers/move, customers/import/5, invoices?status=overdue); the value
+// becomes this page's route.
+const OPEN_ROUTE = /^[a-z]+(\/[a-z]+)?(\/\d+)?(\?[a-z_]+=[a-z0-9_]+)?$/;
 function openFromQuery() {
 	const open = new URLSearchParams(location.search).get("open") ?? "";
-	if (/^[a-z]+(\/\d+)?(\?[a-z_]+=[a-z0-9_]+)?$/.test(open) && !location.hash) history.replaceState(null, "", `${location.pathname}#/${open}`);
+	if (OPEN_ROUTE.test(open) && !location.hash) history.replaceState(null, "", `${location.pathname}#/${open}`);
 }
 
 if (document.body.dataset.page === "setup") {

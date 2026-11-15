@@ -7,6 +7,7 @@
 
 import { decodeText, parseDelimited } from "../lib/csv.mjs";
 import { isEmail } from "../lib/mail.mjs";
+import { CURRENCIES } from "./common.mjs";
 
 const OPEN = ["new", "accepted"];
 // Ledger's migration sends "customer" lists; modules hand each other "entity"
@@ -142,7 +143,7 @@ export function importRoutes(ctx, h, dashboard, store) {
 
 	// A new list puts a to-do on the dashboard (in the organization it came to).
 	ctx.files?.onReceive(async (f) => {
-		if (f.kind !== "customer") return;
+		if (!LIST_KINDS.includes(f.kind)) return;
 		const org = await ctx.orgs.current().catch(() => null);
 		dashboard.schedule(org?.id);
 	});
@@ -168,7 +169,6 @@ const LIMITS = { name: 200, company: 200, email: 254, phone: 50, address: 1000, 
 export function csvImport(ctx, h, store) {
 	if (!ctx.imports) return;
 	const { q, loadSettings, CUSTOMERS } = h;
-	const CURRENCIES = ["CAD", "USD"];
 
 	ctx.imports.provide({
 		label: "Customers",

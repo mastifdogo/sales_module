@@ -91,7 +91,7 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.19.3 or newer** (renumbered accounts, Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
+Needs **Ledger 0.20.0 or newer** (clearing accounts, renumbered accounts, Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
 "+ New account…", journal entry links, settings per organization, plus the
 settings form, Gmail, search and user roles from earlier versions). In
 Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
@@ -117,6 +117,16 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.14.1**: fixes. **+ Billable items** now shows on every invoice (it
+  was hidden unless an extra billable account was set, so costs in Sales'
+  own clearing account couldn't be billed). Looking for matching deposits
+  from one customer's page no longer drops the suggestions waiting for
+  other customers. The dashboard to-dos for moving customers and for a
+  customer list open the right page, and a list of kind `entity` gets its
+  to-do straight away. A draft for a customer archived since can be edited
+  without choosing another customer. A list address with an unknown
+  `status` answers "not valid" instead of a server error, and error
+  messages point to Settings → Sales → Accounts and Taxes.
 - **0.14.0**: billable costs go through Sales' own clearing account,
   *Billable costs to recharge*, which Sales makes and always looks in;
   invoicing an item clears its cost from it. Other accounts are optional.
@@ -271,7 +281,11 @@ server/common.mjs       input validation, settings, shared helpers
 server/documents.mjs    invoices, quotes, estimates (lines, posting, PDF, email)
 server/catalog.mjs      taxes and categories
 server/customers.mjs    customers
+server/customer-store.mjs  customers in Ledger's shared list (add, update, adopt, move)
+server/billable.mjs     billable items from the clearing and other accounts
+server/imports.mjs      customer lists from Ledger's migration, Import from CSV
 server/settings.mjs     settings for the page, numbering, test email, summary
+server/document-settings.mjs  invoice, quote and estimate settings (their tabs)
 server/email.mjs        sending through ctx.mail (or the older own-SMTP settings)
 server/search.mjs       results for Ledger's search bar
 server/payments.mjs     receive payment, deposit matching (rules + ctx.llm)
@@ -280,6 +294,7 @@ server/move-settings.mjs  one-time copy of pre-0.2.0 settings into Ledger's form
 lib/money.mjs           exact money and tax arithmetic
 lib/pdf.mjs             PDF writer and document layout
 lib/mail.mjs            SMTP client (TLS, STARTTLS, AUTH PLAIN/LOGIN) and MIME builder
+lib/csv.mjs             reader for the customer lists Ledger hands over
 migrations/             database schema (each file runs once; never edit a released one)
 ui/                     the page shown inside Ledger (plain HTML/JS, no build);
                         settings-*.html are the pages on the tabs of Settings → Sales

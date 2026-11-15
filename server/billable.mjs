@@ -9,7 +9,6 @@
 // so an item can't be billed twice. Deleting a draft or voiding an invoice
 // frees its items again.
 
-export const BILLABLE_KEYS = ["billable_account_1", "billable_account_2", "billable_account_3", "billable_account_4", "billable_account_5"];
 const PAGE = 500;
 export const CLEARING_KEY = "billable_costs";
 export const CLEARING_NAME = "Billable costs to recharge";
@@ -35,10 +34,7 @@ export function billableItems(ctx, h) {
 
 	/** The extra billable accounts set in Settings (codes, renumbered by Ledger with the account). */
 	async function accounts() {
-		const s = await loadSettings();
-		const raw = ctx.settings ? await ctx.settings.get().catch(() => ({})) : {};
-		const codes = BILLABLE_KEYS.map((k) => String(raw[k] ?? s[k] ?? "").trim()).filter(Boolean);
-		return [...new Set(codes)];
+		return (await loadSettings()).billable_accounts;
 	}
 
 	/** Journal line ids already on an invoice that isn't void (other than `exceptDoc`). */

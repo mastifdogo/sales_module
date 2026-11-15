@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import register from "../server.mjs";
 
@@ -114,4 +115,68 @@ test("organizations: startup and dashboard syncs run in each organization's book
 	await route.handler({ params: {}, body: {}, query: new URLSearchParams(), user: { username: "a", role: "admin", organization: { id: 2, name: "Side", kind: "business" } } });
 	await new Promise((r) => setTimeout(r, 700));
 	assert.deepEqual([...new Set(seen.filter(([w]) => w.startsWith("dashboard.")).map(([, o]) => o))], [2]);
+});
+
+test("a list's status filter that isn't one answers 422, not a server error", async () => {
+	const { ctx, routes } = fakeCtx();
+	await register(ctx);
+	const list = (path, status) => routes.find((r) => r.method === "GET" && r.path === path).handler({ params: {}, query: new URLSearchParams({ status }), user: { username: "bob", role: "viewer" } });
+	for (const status of ["constructor", "__proto__", "toString", "nope"]) {
+		await assert.rejects(list("/invoices", status), (e) => e.status === 422, status);
+		await assert.rejects(list("/quotes", status), (e) => e.status === 422, status);
+	}
+	assert.deepEqual(await list("/invoices", "overdue"), { data: [] });
+});
+
+test("looking for one customer's deposits keeps the suggestions for other customers", async () => {
+	const deletes = [];
+	const { ctx, routes } = fakeCtx({
+		settings: { get: async () => ({ bank_account_cad: "1000" }), set: async () => {}, onChange() {} },
+		ledger: { accountLedger: async () => ({ lines: [{ journal_entry_id: 6, line_id: 14, entry_date: "2026-11-12", description: "Deposit", debit_cents: 5000 }] }) },
+	});
+	ctx.db.query = async (sql, params) => {
+		if (sql.includes("DELETE FROM mod_sales.payment_suggestions")) deletes.push({ sql, params });
+		return { rows: [], rowCount: 0 };
+	};
+	await register(ctx);
+	const match = (body) => routes.find((r) => r.method === "POST" && r.path === "/payments/match").handler({ params: {}, body, query: new URLSearchParams(), user: { username: "bob", role: "bookkeeper" } });
+	await match({});
+	await match({ customer_id: 2 });
+	assert.equal(deletes.length, 2);
+	// Everyone's invoices were looked at: every open suggestion for the deposit is replaced.
+	assert.deepEqual(deletes[0].params, [["14"], null]);
+	// One customer's: only suggestions that pay nobody else's invoices.
+	assert.deepEqual(deletes[1].params, [["14"], "2"]);
+	assert.match(deletes[1].sql, /d\.customer_id <> \$2::bigint/);
+});
+
+test("an entity list handed to Sales puts its to-do on the dashboard, like a customer list", async () => {
+	const calls = [];
+	let received;
+	const dashboard = new Proxy({}, { get: (_, name) => async () => (calls.push(name), name === "list" ? [] : true) });
+	const { ctx } = fakeCtx({ dashboard, files: { onReceive: (fn) => (received = fn), inbox: async () => [] } });
+	ctx.orgs.current = async () => ({ id: 1, name: "Main books", kind: "business" });
+	await register(ctx);
+	await new Promise((r) => setTimeout(r, 50));
+	for (const kind of ["customer", "entity"]) {
+		calls.length = 0;
+		await received({ id: 5, kind });
+		await new Promise((r) => setTimeout(r, 700));
+		assert.ok(calls.includes("list"), kind);
+	}
+	calls.length = 0;
+	await received({ id: 6, kind: "statement" });
+	await new Promise((r) => setTimeout(r, 700));
+	assert.deepEqual(calls, []);
+});
+
+test("the page opens every link the dashboard and the search bar make", async () => {
+	const page = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
+	const source = /const OPEN_ROUTE = \/(.+)\/;/.exec(page)?.[1];
+	assert.ok(source, "ui/app.js declares OPEN_ROUTE");
+	const opens = new RegExp(source);
+	for (const path of ["invoices/31", "quotes/3", "estimates/4", "customers/7", "customers", "payments", "invoices?status=overdue", "customers/move", "customers/import/5"]) {
+		assert.ok(opens.test(path), path);
+	}
+	for (const path of ["", "//example.com", "invoices/../x", "javascript:alert(1)", "invoices/31#x"]) assert.ok(!opens.test(path), path);
 });

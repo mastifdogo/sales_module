@@ -325,9 +325,20 @@ export function paymentRoutes(ctx, h, docs) {
 			}
 		}
 		// Replace the open suggestions for the deposits looked at with the new ones.
+		// A search for one customer only saw that customer's invoices, so it
+		// leaves suggestions that pay anyone else's alone.
 		const found = [...rules, ...fromAi];
 		const looked = deps.map((d) => String(d.line_id));
-		if (looked.length) await q(`DELETE FROM ${T("payment_suggestions")} WHERE status = 'pending' AND line_id = ANY($1::bigint[])`, [looked]);
+		if (looked.length) {
+			await q(
+				`DELETE FROM ${T("payment_suggestions")} s
+				  WHERE s.status = 'pending' AND s.line_id = ANY($1::bigint[])
+				    AND ($2::bigint IS NULL OR NOT EXISTS (
+				          SELECT 1 FROM jsonb_array_elements(s.allocations) a JOIN ${T("documents")} d ON d.id = (a ->> 'invoice_id')::bigint
+				           WHERE d.customer_id <> $2::bigint))`,
+				[looked, cid],
+			);
+		}
 		for (const m of found) {
 			const d = m.deposit;
 			await q(

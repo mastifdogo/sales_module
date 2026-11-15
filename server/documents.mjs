@@ -32,6 +32,7 @@ const COLUMN_TYPES = {
 const OPEN_QUOTE = ["draft", "sent"];
 
 export function documentRoutes(ctx, h, mail) {
+	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings, CUSTOMERS, TAX_ACCOUNTS, CATEGORY_ACCOUNTS } = h;
 	const billable = billableItems(ctx, h);
 
 	/**
@@ -47,7 +48,6 @@ export function documentRoutes(ctx, h, mail) {
 			ctx.log.warn("could not make the billable-costs clearing accounts", { err: e.message, ...(org ? { organization: org.name } : {}) });
 		}
 	}
-	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings, CUSTOMERS, TAX_ACCOUNTS, CATEGORY_ACCOUNTS } = h;
 
 	const byId = (rows) => new Map(rows.map((r) => [String(r.id), r]));
 	const loadTaxes = async () => byId((await q(`SELECT *, ${TAX_ACCOUNTS} FROM ${T("taxes")}`)).rows);
@@ -255,7 +255,7 @@ export function documentRoutes(ctx, h, mail) {
 		}
 		const cur = doc.currency;
 		const receivable = s.accounts?.[cur]?.receivable;
-		if (!receivable) throw bad(`Ledger posting is on, but no receivable account is set for ${cur} (Settings → Ledger posting)`);
+		if (!receivable) throw bad(`Ledger posting is on, but no receivable account is set for ${cur} (Settings → Sales → Accounts)`);
 		const [categories, taxes] = await Promise.all([loadCategories(), loadTaxes()]);
 		const credits = new Map(); // account → cents
 		const add = (acct, cents, memo) => credits.set(acct, { cents: (credits.get(acct)?.cents ?? 0n) + cents, memo });
@@ -265,8 +265,8 @@ export function documentRoutes(ctx, h, mail) {
 			if (!acct) {
 				throw bad(
 					cat
-						? `category "${cat.name}" has no ${cur} revenue account, and no default revenue account is set (Settings → Ledger posting)`
-						: `line ${i + 1} has no category, and no default ${cur} revenue account is set (Settings → Ledger posting)`,
+						? `category "${cat.name}" has no ${cur} revenue account, and no default revenue account is set (Settings → Sales → Accounts)`
+						: `line ${i + 1} has no category, and no default ${cur} revenue account is set (Settings → Sales → Accounts)`,
 				);
 			}
 			const cost = clearingCode ? (l.billed_ledger_line_ids ?? []).reduce((n, id) => n + (fromClearing.get(String(id)) ?? 0n), 0n) : 0n;
@@ -276,7 +276,7 @@ export function documentRoutes(ctx, h, mail) {
 		for (const t of totals.taxes) {
 			if (t.tax_cents === 0n) continue;
 			const acct = taxes.get(String(t.id))?.accounts?.[cur];
-			if (!acct) throw bad(`set the ${cur} account for ${t.name} first (Settings → Taxes)`);
+			if (!acct) throw bad(`set the ${cur} account for ${t.name} first (Settings → Sales → Taxes)`);
 			add(acct, t.tax_cents, t.name);
 		}
 		const memo = `Invoice ${doc.number}`;
@@ -522,7 +522,7 @@ export function documentRoutes(ctx, h, mail) {
 			issue_date: doc.issue_date,
 			business: s.business_name || s.from_name || "",
 		};
-		return String(template).replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => (k in vars ? vars[k] : m));
+		return String(template).replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => (Object.hasOwn(vars, k) ? vars[k] : m));
 	}
 
 	function emailDefaults(doc, s) {
@@ -573,7 +573,7 @@ ${paras}
 			const search = (req.query.get("q") ?? "").trim();
 			const customer = req.query.get("customer_id") ?? "";
 			if (customer && !/^\d{1,18}$/.test(customer)) throw bad("customer_id is not valid");
-			const where = LIST_FILTERS[kind][status];
+			const where = Object.hasOwn(LIST_FILTERS[kind], status) ? LIST_FILTERS[kind][status] : null;
 			if (!where) throw bad(`status must be one of: ${Object.keys(LIST_FILTERS[kind]).filter(Boolean).join(", ")}`);
 			const { rows } = await q(
 				`SELECT d.id, d.kind, d.number, d.status, d.issue_date::text, d.due_date::text, d.currency, d.total_cents, d.paid_cents,

@@ -46,8 +46,8 @@ export function dashboardSync(ctx, h) {
 			}
 		}
 		// AI and rule matches wait for a person to review them.
-		const pending = await q(`SELECT count(*)::int AS n FROM ${T("payment_suggestions")} WHERE status = 'pending'`);
-		const n = pending.rows[0]?.n ?? 0;
+		const suggestions = await q(`SELECT count(*)::int AS n FROM ${T("payment_suggestions")} WHERE status = 'pending'`);
+		const n = suggestions.rows[0]?.n ?? 0;
 		if (n > 0) {
 			todos.set("payment-suggestions", {
 				title: `${n} payment suggestion${n === 1 ? "" : "s"} to review`,
