@@ -167,8 +167,19 @@ payments to the books.
   removed matched payment unlinks its deposit.
 - Settings are the manifest's `settings.fields`
   (Ledger's form under Settings → Sales), read through `loadSettings()` in
-  `server/common.mjs`. What a form can't hold (taxes, next document numbers,
-  the email check) is `ui/setup.html`, shown under the form. The module's
+  `server/common.mjs`. What a form can't hold (taxes, the email check, and
+  the per-document tabs) is `ui/setup.html`, shown under the form.
+- Invoice, quote and estimate settings (prefix, days, printed terms, email
+  subject and message) are in Sales' own `document_settings` table, one row
+  per kind, edited in the Invoices / Quotes / Estimates tabs of `setup.html`
+  (`GET /document-settings`, admin-only `PUT /document-settings/:kind`, which
+  also sets the next number). The user asked for tabs, which Ledger's flat
+  form can't draw, so this is a deliberate exception to "use Ledger's form".
+  `loadSettings()` still returns them under the old keys (`invoice_prefix`,
+  `quote_valid_days`, `estimate_email_subject`, …). `copyDocumentSettings()`
+  copied each organization's values from Ledger's stored form (read from
+  `public.module_settings`, since the fields left the manifest) once at
+  startup in 0.11.0. The module's
   own `settings` table now only keeps the running numbers; values from
   before 0.2.0 are copied into Ledger's form once (`move-settings.mjs`).
 - Email: `ctx.mail.send()` (Ledger's mailbox, any provider; an admin allows

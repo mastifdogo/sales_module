@@ -114,6 +114,11 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.11.0**: invoice, quote and estimate settings each have their own tab
+  under Settings → Sales (below Ledger's form): number prefix and next
+  number, days, printed terms and email text. Estimates now have their own
+  email text, and invoices can have printed terms. Your current values are
+  copied over when Sales starts.
 - **0.10.0**: billable items. Set the accounts under Settings → Sales;
   costs posted to them and tagged with a customer can be added to that
   customer's invoice, individually or combined into one line, and are then
@@ -169,17 +174,17 @@ documents, record payments and manage customers; viewers can only look.
 
 1. **Settings → Sales** (Ledger's settings form for the module):
    - **Your business**: name, address, GST/HST registration number, footer.
-   - **Numbering and defaults**: number prefixes, payment terms, how long
-     quotes and estimates stay valid, the terms printed on them.
    - **Ledger posting** (optional): turn it on and enter the receivable,
      default revenue and bank account codes for each currency.
    - **Email**: *Ledger's mailbox* (the default). *Sales' own mail server
      settings* remain for setups from before Ledger had a mailbox.
-   - **Email messages**: subject and text for invoices and for
-     quotes/estimates, with placeholders.
+   - **Billable items** accounts (optional).
 2. Below that form on the same tab:
    - **Email** shows whether sending works, with a **Send a test email** button.
-   - **Numbering** sets the next invoice, quote and estimate number.
+   - **Invoices, quotes and estimates**: a tab each, with the number prefix
+     and next number, the payment terms (invoices) or how long it stays
+     valid (quotes, estimates), the terms printed on the PDF, and the email
+     subject and message, with placeholders.
    - **Taxes**: GST is on. Click **Edit** on each tax you collect, turn it
      on, choose the account it's owed to (e.g. `2200 GST/HST payable`) and
      whether new lines get it by default.

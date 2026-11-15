@@ -97,11 +97,14 @@ export function helpers(ctx) {
 	 * applies straight away.
 	 */
 	async function loadSettings() {
-		const [v, counters, defaults] = await Promise.all([
+		const [v, counters, defaults, docRows] = await Promise.all([
 			ctx.settings.get(),
 			q(`SELECT next_invoice_number, next_quote_number, next_estimate_number FROM ${T("settings")} WHERE id = 1`),
 			q(`SELECT id::int AS id FROM ${T("taxes")} WHERE is_default ORDER BY position, id`),
+			q(`SELECT kind, number_prefix, days, terms, email_subject, email_message FROM ${T("document_settings")}`),
 		]);
+		const doc = Object.fromEntries(docRows.rows.map((r) => [r.kind, r]));
+		const d = (kind, col, fallback) => doc[kind]?.[col] ?? fallback;
 		const str = (k) => (typeof v[k] === "string" ? v[k].trim() : "");
 		const num = (k, d) => (typeof v[k] === "number" ? v[k] : d);
 		const accounts = {};
@@ -118,15 +121,17 @@ export function helpers(ctx) {
 			tax_id_label: str("tax_id_label"),
 			tax_id: str("tax_id"),
 			footer: str("footer"),
-			invoice_prefix: str("invoice_prefix"),
-			quote_prefix: str("quote_prefix"),
-			estimate_prefix: str("estimate_prefix"),
+			// Per kind of document (Sales' own table, a tab each under Settings → Sales).
+			invoice_prefix: d("invoice", "number_prefix", "INV-"),
+			quote_prefix: d("quote", "number_prefix", "QUO-"),
+			estimate_prefix: d("estimate", "number_prefix", "EST-"),
 			default_currency: CURRENCIES.includes(v.default_currency) ? v.default_currency : "CAD",
-			default_terms_days: num("default_terms_days", 30),
-			quote_valid_days: num("quote_valid_days", 30),
-			estimate_valid_days: num("estimate_valid_days", 30),
-			quote_terms: str("quote_terms"),
-			estimate_terms: str("estimate_terms"),
+			default_terms_days: d("invoice", "days", 30),
+			quote_valid_days: d("quote", "days", 30),
+			estimate_valid_days: d("estimate", "days", 30),
+			invoice_terms: d("invoice", "terms", ""),
+			quote_terms: d("quote", "terms", ""),
+			estimate_terms: d("estimate", "terms", ""),
 			default_tax_ids: defaults.rows.map((r) => r.id),
 			post_to_ledger: v.post_to_ledger === true,
 			accounts,
@@ -141,10 +146,12 @@ export function helpers(ctx) {
 			from_email: str("from_email"),
 			reply_to: str("reply_to"),
 			bcc_self: v.bcc_self === true,
-			email_subject: str("email_subject"),
-			email_body: str("email_body"),
-			quote_email_subject: str("quote_email_subject"),
-			quote_email_body: str("quote_email_body"),
+			email_subject: d("invoice", "email_subject", ""),
+			email_body: d("invoice", "email_message", ""),
+			quote_email_subject: d("quote", "email_subject", ""),
+			quote_email_body: d("quote", "email_message", ""),
+			estimate_email_subject: d("estimate", "email_subject", ""),
+			estimate_email_body: d("estimate", "email_message", ""),
 		};
 	}
 

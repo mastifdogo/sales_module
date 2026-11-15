@@ -505,8 +505,8 @@ export function documentRoutes(ctx, h, mail) {
 		return {
 			to: doc.customer.email,
 			cc: doc.customer.cc_emails,
-			subject: fill(inv ? s.email_subject : s.quote_email_subject, doc, s),
-			message: fill(inv ? s.email_body : s.quote_email_body, doc, s),
+			subject: fill(inv ? s.email_subject : s[`${doc.kind}_email_subject`], doc, s),
+			message: fill(inv ? s.email_body : s[`${doc.kind}_email_body`], doc, s),
 		};
 	}
 

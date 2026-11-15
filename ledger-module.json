@@ -1,7 +1,7 @@
 {
   "id": "sales",
   "name": "Sales",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Invoices, quotes and estimates with GST and other sales taxes, customer records and sales categories that track to your revenue accounts. Emails PDFs through Ledger's mailbox, files them in Ledger's Documents, puts overdue invoices and follow-ups on the dashboard, and can post invoices and payments to the books.",
   "ledger": ">=0.19.3",
   "server": "server.mjs",
@@ -54,21 +54,6 @@
         "help": "Printed at the bottom of every document: payment instructions, thanks…"
       },
       {
-        "key": "invoice_prefix",
-        "label": "Invoice number prefix",
-        "default": "INV-"
-      },
-      {
-        "key": "quote_prefix",
-        "label": "Quote number prefix",
-        "default": "QUO-"
-      },
-      {
-        "key": "estimate_prefix",
-        "label": "Estimate number prefix",
-        "default": "EST-"
-      },
-      {
         "key": "default_currency",
         "label": "Default currency",
         "type": "select",
@@ -77,42 +62,6 @@
           "USD"
         ],
         "default": "CAD"
-      },
-      {
-        "key": "default_terms_days",
-        "label": "Invoice payment terms (days)",
-        "type": "number",
-        "min": 0,
-        "max": 365,
-        "default": 30
-      },
-      {
-        "key": "quote_valid_days",
-        "label": "Quotes valid for (days)",
-        "type": "number",
-        "min": 0,
-        "max": 365,
-        "default": 30
-      },
-      {
-        "key": "estimate_valid_days",
-        "label": "Estimates valid for (days)",
-        "type": "number",
-        "min": 0,
-        "max": 365,
-        "default": 30
-      },
-      {
-        "key": "quote_terms",
-        "label": "Terms printed on quotes",
-        "type": "textarea",
-        "default": "Prices are fixed until the date above. To accept, reply to this email."
-      },
-      {
-        "key": "estimate_terms",
-        "label": "Terms printed on estimates",
-        "type": "textarea",
-        "default": "This is an estimate, not a fixed price. The final invoice may differ."
       },
       {
         "key": "post_to_ledger",
@@ -248,30 +197,6 @@
         "key": "from_email",
         "label": "Send from (SMTP)",
         "help": "The sender address when using your own mail server."
-      },
-      {
-        "key": "email_subject",
-        "label": "Invoice email subject",
-        "default": "Invoice {{number}} from {{business}}"
-      },
-      {
-        "key": "email_body",
-        "label": "Invoice email message",
-        "type": "textarea",
-        "default": "Hello {{customer}},\n\nPlease find attached invoice {{number}} for {{total}}, due {{due_date}}.\n\nThank you for your business.\n{{business}}",
-        "help": "Placeholders: {{number}} {{customer}} {{company}} {{total}} {{balance}} {{issue_date}} {{due_date}} {{business}}"
-      },
-      {
-        "key": "quote_email_subject",
-        "label": "Quote/estimate email subject",
-        "default": "{{type}} {{number}} from {{business}}"
-      },
-      {
-        "key": "quote_email_body",
-        "label": "Quote/estimate email message",
-        "type": "textarea",
-        "default": "Hello {{customer}},\n\nPlease find attached {{type_lower}} {{number}} for {{total}}, valid until {{due_date}}.\n\nLet us know if you have any questions.\n{{business}}",
-        "help": "Also {{type}} (Quote/Estimate), {{type_lower}} and {{valid_until}}."
       }
     ],
     "page": "setup.html"

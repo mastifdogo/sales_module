@@ -241,7 +241,7 @@ async function route() {
 	const [path, query] = location.hash.slice(1).split("?");
 	const qs = new URLSearchParams(query ?? "");
 	const tab = (path.split("/")[1] || "invoices").toLowerCase();
-	for (const a of document.querySelectorAll(".tabs a")) a.classList.toggle("active", a.dataset.tab === tab);
+	for (const a of document.querySelectorAll(".tabs:not(.subtabs) a")) a.classList.toggle("active", a.dataset.tab === tab);
 	for (const [re, fn] of routes) {
 		const m = re.exec(path);
 		if (!m) continue;
@@ -1669,37 +1669,74 @@ function taxDialog(tax, accounts, done) {
 }
 
 /** Taxes, document numbering and the email check: what Ledger's settings form can't hold. */
+const DOC_TABS = [
+	{ kind: "invoice", label: "Invoices", days: "Payment terms (days until due)", daysHint: "A customer's own terms win.", terms: "Terms printed on invoices", placeholders: "{{number}} {{customer}} {{company}} {{total}} {{balance}} {{issue_date}} {{due_date}} {{business}}" },
+	{ kind: "quote", label: "Quotes", days: "Valid for (days)", daysHint: "", terms: "Terms printed on quotes", placeholders: "{{number}} {{customer}} {{company}} {{total}} {{issue_date}} {{due_date}} {{valid_until}} {{business}}" },
+	{ kind: "estimate", label: "Estimates", days: "Valid for (days)", daysHint: "", terms: "Terms printed on estimates", placeholders: "{{number}} {{customer}} {{company}} {{total}} {{issue_date}} {{due_date}} {{valid_until}} {{business}}" },
+];
+let docTab = "invoice";
+
+/** A tab each for invoices, quotes and estimates: numbering, days, printed terms, email text. */
+async function documentSettingsTabs(admin) {
+	const { data } = await api("/document-settings");
+	const byKind = new Map(data.map((d) => [d.kind, d]));
+	const panel = h("div", { role: "tabpanel" });
+	const bar = h("div", { class: "tabs subtabs", role: "tablist" });
+	const show = (kind) => {
+		docTab = kind;
+		const t = DOC_TABS.find((x) => x.kind === kind);
+		const d = byKind.get(kind);
+		for (const a of bar.children) {
+			const on = a.dataset.kind === kind;
+			a.classList.toggle("active", on);
+			a.setAttribute("aria-selected", String(on));
+		}
+		const opts = { disabled: !admin };
+		const prefix = input("number_prefix", d.number_prefix, { maxlength: 20, ...opts });
+		const next = input("next_number", d.next_number, { type: "number", min: 1, ...opts });
+		const preview = h("p", { class: "hint" });
+		const updatePreview = () => (preview.textContent = `Next number: ${prefix.value}${String(next.value || 1).padStart(4, "0")}. Numbers already used are skipped.`);
+		prefix.oninput = next.oninput = updatePreview;
+		updatePreview();
+		const form = h(
+			"form",
+			{ autocomplete: "off" },
+			h("div", { class: "grid" }, field("Number prefix", prefix), field("Next number", next), field(t.days, input("days", d.days, { type: "number", min: 0, max: 365, ...opts }))),
+			preview,
+			t.daysHint ? h("p", { class: "hint" }, t.daysHint) : null,
+			field(t.terms, textarea("terms", d.terms, { rows: 2, maxlength: 5000, ...opts }), "wide"),
+			field("Email subject", input("email_subject", d.email_subject, { maxlength: 300, required: true, ...opts }), "wide"),
+			field("Email message", textarea("email_message", d.email_message, { rows: 6, maxlength: 10000, required: true, ...opts }), "wide"),
+			h("p", { class: "hint" }, `Placeholders: ${t.placeholders}`),
+			admin ? h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, `Save ${t.label.toLowerCase()} settings`)) : null,
+		);
+		form.onsubmit = (e) => {
+			e.preventDefault();
+			busy(e.submitter, async () => {
+				const saved = await api(`/document-settings/${kind}`, { method: "PUT", body: formData(form) });
+				byKind.set(kind, saved);
+				flash(`${t.label} settings saved.`);
+				show(kind);
+			});
+		};
+		panel.replaceChildren(form);
+	};
+	for (const t of DOC_TABS) {
+		bar.append(
+			h("a", { href: "#", role: "tab", "data-kind": t.kind, onclick: (e) => (e.preventDefault(), show(t.kind)) }, t.label),
+		);
+	}
+	show(docTab);
+	return h("div", {}, bar, panel);
+}
+
 async function setupView() {
 	const [s, accounts, taxes] = await Promise.all([api("/settings"), loadAccounts(), api("/taxes")]);
 	const reload = () => setupView().catch(fail);
 	const admin = s.is_admin;
 	const edit = (t) => (admin ? h("button", { type: "button", class: "link", onclick: () => taxDialog(t, accounts, reload) }, "Edit") : null);
 
-	const numbering = h(
-		"form",
-		{ autocomplete: "off" },
-		h(
-			"div",
-			{ class: "grid" },
-			["invoice", "quote", "estimate"].map((k) =>
-				field(`Next ${k} number`, input(`next_${k}_number`, s[`next_${k}_number`], { type: "number", min: 1, disabled: !admin })),
-			),
-		),
-		h(
-			"p",
-			{ class: "hint" },
-			`Next numbers: ${s.invoice_prefix}${String(s.next_invoice_number).padStart(4, "0")}, ${s.quote_prefix}${String(s.next_quote_number).padStart(4, "0")}, ${s.estimate_prefix}${String(s.next_estimate_number).padStart(4, "0")}. The prefixes are in the form above. Numbers already used are skipped.`,
-		),
-		admin ? h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Save numbering")) : null,
-	);
-	numbering.onsubmit = (e) => {
-		e.preventDefault();
-		busy(e.submitter, async () => {
-			await api("/numbering", { method: "PUT", body: formData(numbering) });
-			flash("Numbering saved.");
-			reload();
-		});
-	};
+	const documents = await documentSettingsTabs(admin);
 
 	const em = s.email;
 	render(
@@ -1713,7 +1750,7 @@ async function setupView() {
 			h("p", { class: "hint" }, "Ledger's mailbox is connected, and Sales allowed to send, under ", h("a", { href: "/settings/mail", target: "_top" }, "Settings → Mail"), "."),
 			h("div", { class: "actions" }, h("button", { type: "button", disabled: !em.ready, onclick: (e) => busy(e.currentTarget, testEmail) }, "Send a test email")),
 		),
-		h("fieldset", {}, h("legend", {}, "Numbering"), numbering),
+		h("fieldset", {}, h("legend", {}, "Invoices, quotes and estimates"), documents),
 		h(
 			"fieldset",
 			{},
