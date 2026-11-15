@@ -114,6 +114,12 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.13.0**: a tidier Settings → Sales. Accounts are chosen from a list
+  instead of typed as codes, grouped under Canadian dollars, US dollars and
+  Billable costs, and shown only when posting to the books is on. The mail
+  server fields show only when you send through a server of your own.
+  Shorter labels throughout. Saved values are unchanged. Needs Ledger 0.19.8.
+
 - **0.12.0**: Settings → Sales is split into tabs: Business, Accounts,
   Invoices, Quotes, Estimates, Taxes and Email. Each tab saves on its own.
   Nothing about your settings changes. Needs Ledger 0.19.6.

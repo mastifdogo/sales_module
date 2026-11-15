@@ -1,9 +1,9 @@
 {
   "id": "sales",
   "name": "Sales",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Invoices, quotes and estimates with GST and other sales taxes, customer records and sales categories that track to your revenue accounts. Emails PDFs through Ledger's mailbox, files them in Ledger's Documents, puts overdue invoices and follow-ups on the dashboard, and can post invoices and payments to the books.",
-  "ledger": ">=0.19.6",
+  "ledger": ">=0.19.8",
   "server": "server.mjs",
   "ui": "ui",
   "nav": {
@@ -19,245 +19,49 @@
   },
   "settings": {
     "tabs": [
-      {
-        "id": "business",
-        "label": "Business",
-        "help": "Who you are, as printed on every invoice, quote and estimate."
-      },
-      {
-        "id": "accounts",
-        "label": "Accounts",
-        "help": "The accounts invoices, payments and billable costs are posted to. Account codes are the ones under Accounts."
-      },
-      {
-        "id": "invoices",
-        "label": "Invoices",
-        "page": "settings-invoices.html"
-      },
-      {
-        "id": "quotes",
-        "label": "Quotes",
-        "page": "settings-quotes.html"
-      },
-      {
-        "id": "estimates",
-        "label": "Estimates",
-        "page": "settings-estimates.html"
-      },
-      {
-        "id": "taxes",
-        "label": "Taxes",
-        "page": "settings-taxes.html"
-      },
-      {
-        "id": "email",
-        "label": "Email",
-        "help": "How invoices, quotes and estimates are emailed.",
-        "page": "settings-email.html"
-      }
+      { "id": "business", "label": "Business", "help": "Who you are, as printed on every invoice, quote and estimate." },
+      { "id": "accounts", "label": "Accounts", "help": "Whether Sales posts to the books, and the accounts it uses." },
+      { "id": "invoices", "label": "Invoices", "page": "settings-invoices.html" },
+      { "id": "quotes", "label": "Quotes", "page": "settings-quotes.html" },
+      { "id": "estimates", "label": "Estimates", "page": "settings-estimates.html" },
+      { "id": "taxes", "label": "Taxes", "page": "settings-taxes.html" },
+      { "id": "email", "label": "Email", "help": "How invoices, quotes and estimates are emailed.", "page": "settings-email.html" }
     ],
     "fields": [
-      {
-        "key": "business_name",
-        "label": "Business name",
-        "help": "Shown at the top of every invoice, quote and estimate."
-      },
-      {
-        "key": "business_address",
-        "label": "Business address",
-        "type": "textarea"
-      },
-      {
-        "key": "business_email",
-        "label": "Business email"
-      },
-      {
-        "key": "business_phone",
-        "label": "Business phone"
-      },
-      {
-        "key": "tax_id_label",
-        "label": "Tax number label",
-        "default": "GST/HST No."
-      },
-      {
-        "key": "tax_id",
-        "label": "GST/HST registration number",
-        "help": "Printed on every document, e.g. 123456789RT0001."
-      },
-      {
-        "key": "footer",
-        "label": "Footer",
-        "type": "textarea",
-        "help": "Printed at the bottom of every document: payment instructions, thanks…"
-      },
-      {
-        "key": "default_currency",
-        "label": "Default currency",
-        "type": "select",
-        "options": [
-          "CAD",
-          "USD"
-        ],
-        "default": "CAD"
-      },
-      {
-        "key": "post_to_ledger",
-        "label": "Post invoices and payments to the books",
-        "type": "boolean",
-        "default": false,
-        "help": "Issuing posts Dr receivable / Cr category revenue and each tax; payments post Dr bank / Cr receivable.",
-        "tab": "accounts"
-      },
-      {
-        "key": "receivable_account_cad",
-        "label": "Receivable account (CAD)",
-        "help": "An asset account code in CAD, e.g. 1200.",
-        "tab": "accounts"
-      },
-      {
-        "key": "revenue_account_cad",
-        "label": "Default revenue account (CAD)",
-        "help": "For lines without a category, or a category with no account in this currency.",
-        "tab": "accounts"
-      },
-      {
-        "key": "bank_account_cad",
-        "label": "Bank account for payments (CAD)",
-        "tab": "accounts"
-      },
-      {
-        "key": "receivable_account_usd",
-        "label": "Receivable account (USD)",
-        "help": "An asset account code in USD, e.g. 1200.",
-        "tab": "accounts"
-      },
-      {
-        "key": "revenue_account_usd",
-        "label": "Default revenue account (USD)",
-        "help": "For lines without a category, or a category with no account in this currency.",
-        "tab": "accounts"
-      },
-      {
-        "key": "bank_account_usd",
-        "label": "Bank account for payments (USD)",
-        "tab": "accounts"
-      },
-      {
-        "key": "billable_account_1",
-        "label": "Billable items account 1",
-        "help": "Account codes where billable costs are posted (e.g. 5850 Billable expenses). An entry posted to one of these accounts and tagged with a customer in Ledger can be added to that customer's next invoice, each item as its own line or several as one line. Up to five accounts; leave the rest empty.",
-        "tab": "accounts"
-      },
-      {
-        "key": "billable_account_2",
-        "label": "Billable items account 2",
-        "tab": "accounts"
-      },
-      {
-        "key": "billable_account_3",
-        "label": "Billable items account 3",
-        "tab": "accounts"
-      },
-      {
-        "key": "billable_account_4",
-        "label": "Billable items account 4",
-        "tab": "accounts"
-      },
-      {
-        "key": "billable_account_5",
-        "label": "Billable items account 5",
-        "tab": "accounts"
-      },
-      {
-        "key": "email_via",
-        "label": "Send email with",
-        "type": "select",
-        "options": [
-          {
-            "value": "gmail",
-            "label": "Ledger's mailbox (Settings → Mail)"
-          },
-          {
-            "value": "smtp",
-            "label": "Sales' own mail server settings (older setups)"
-          }
-        ],
-        "default": "gmail",
-        "tab": "email"
-      },
-      {
-        "key": "from_name",
-        "label": "Sender name",
-        "help": "Defaults to the business name.",
-        "tab": "email"
-      },
-      {
-        "key": "reply_to",
-        "label": "Reply-to address (optional)",
-        "tab": "email"
-      },
-      {
-        "key": "bcc_self",
-        "label": "Send me a copy (Bcc)",
-        "type": "boolean",
-        "default": false,
-        "tab": "email"
-      },
-      {
-        "key": "smtp_host",
-        "label": "SMTP server",
-        "help": "Only for “My own mail server”. Gmail: smtp.gmail.com; Microsoft 365: smtp.office365.com.",
-        "tab": "email"
-      },
-      {
-        "key": "smtp_port",
-        "label": "SMTP port",
-        "type": "number",
-        "min": 1,
-        "max": 65535,
-        "default": 587,
-        "tab": "email"
-      },
-      {
-        "key": "smtp_security",
-        "label": "SMTP security",
-        "type": "select",
-        "options": [
-          {
-            "value": "tls",
-            "label": "TLS (usually port 465)"
-          },
-          {
-            "value": "starttls",
-            "label": "STARTTLS (usually port 587)"
-          },
-          {
-            "value": "none",
-            "label": "None (local relay only)"
-          }
-        ],
-        "default": "starttls",
-        "tab": "email"
-      },
-      {
-        "key": "smtp_username",
-        "label": "SMTP username",
-        "tab": "email"
-      },
-      {
-        "key": "smtp_password",
-        "label": "SMTP password",
-        "type": "secret",
-        "help": "Many providers need an app password here.",
-        "tab": "email"
-      },
-      {
-        "key": "from_email",
-        "label": "Send from (SMTP)",
-        "help": "The sender address when using your own mail server.",
-        "tab": "email"
-      }
+      { "key": "business_name", "label": "Business name", "help": "Printed at the top of every invoice, quote and estimate." },
+      { "key": "default_currency", "label": "Currency for new documents", "type": "select", "options": ["CAD", "USD"], "default": "CAD" },
+      { "key": "business_email", "label": "Email" },
+      { "key": "business_phone", "label": "Phone" },
+      { "key": "business_address", "label": "Address", "type": "textarea" },
+      { "key": "tax_id_label", "label": "Tax number label", "default": "GST/HST No.", "help": "What the number is called on documents." },
+      { "key": "tax_id", "label": "Tax number", "help": "e.g. 123456789RT0001." },
+      { "key": "footer", "label": "Footer", "type": "textarea", "help": "Printed at the bottom of every document: payment instructions, a thank-you." },
+      { "key": "post_to_ledger", "label": "Post invoices and payments to the books", "type": "boolean", "tab": "accounts", "default": false, "help": "Issuing an invoice debits receivables and credits revenue and each tax; a payment debits the bank and credits receivables. Off: Sales keeps invoices without touching the books." },
+      { "key": "h_accounts_cad", "label": "Canadian dollars", "type": "heading", "tab": "accounts", "show_if": {"key": "post_to_ledger", "equals": true} },
+      { "key": "receivable_account_cad", "label": "Receivables", "type": "account", "tab": "accounts", "currency": "CAD", "account_types": ["asset"], "show_if": {"key": "post_to_ledger", "equals": true} },
+      { "key": "revenue_account_cad", "label": "Revenue", "type": "account", "tab": "accounts", "currency": "CAD", "account_types": ["revenue"], "help": "For lines with no category, or a category with no account in this currency.", "show_if": {"key": "post_to_ledger", "equals": true} },
+      { "key": "bank_account_cad", "label": "Bank account payments go to", "type": "account", "tab": "accounts", "currency": "CAD", "account_types": ["asset"], "show_if": {"key": "post_to_ledger", "equals": true} },
+      { "key": "h_accounts_usd", "label": "US dollars", "type": "heading", "tab": "accounts", "show_if": {"key": "post_to_ledger", "equals": true} },
+      { "key": "receivable_account_usd", "label": "Receivables", "type": "account", "tab": "accounts", "currency": "USD", "account_types": ["asset"], "show_if": {"key": "post_to_ledger", "equals": true} },
+      { "key": "revenue_account_usd", "label": "Revenue", "type": "account", "tab": "accounts", "currency": "USD", "account_types": ["revenue"], "help": "For lines with no category, or a category with no account in this currency.", "show_if": {"key": "post_to_ledger", "equals": true} },
+      { "key": "bank_account_usd", "label": "Bank account payments go to", "type": "account", "tab": "accounts", "currency": "USD", "account_types": ["asset"], "show_if": {"key": "post_to_ledger", "equals": true} },
+      { "key": "h_billable", "label": "Billable costs", "type": "heading", "tab": "accounts", "help": "Costs you pass on to customers. An entry posted to one of these accounts and tagged with a customer can be added to that customer's next invoice. Up to five accounts; leave the rest empty." },
+      { "key": "billable_account_1", "label": "Account 1", "type": "account", "tab": "accounts" },
+      { "key": "billable_account_2", "label": "Account 2", "type": "account", "tab": "accounts" },
+      { "key": "billable_account_3", "label": "Account 3", "type": "account", "tab": "accounts" },
+      { "key": "billable_account_4", "label": "Account 4", "type": "account", "tab": "accounts" },
+      { "key": "billable_account_5", "label": "Account 5", "type": "account", "tab": "accounts" },
+      { "key": "email_via", "label": "Send with", "type": "select", "tab": "email", "options": [{"value": "gmail", "label": "Ledger's mailbox (Settings → Mail)"}, {"value": "smtp", "label": "A mail server of my own (older setups)"}], "default": "gmail" },
+      { "key": "from_name", "label": "Sender name", "tab": "email", "help": "Empty: the business name." },
+      { "key": "reply_to", "label": "Reply-to address", "tab": "email", "help": "Optional." },
+      { "key": "bcc_self", "label": "Send me a copy of every email", "type": "boolean", "tab": "email", "default": false },
+      { "key": "h_smtp", "label": "Your mail server", "type": "heading", "tab": "email", "help": "Only used with “A mail server of my own”. Ledger's mailbox is simpler and works with any provider.", "show_if": {"key": "email_via", "equals": "smtp"} },
+      { "key": "smtp_host", "label": "Server", "tab": "email", "help": "e.g. smtp.gmail.com, smtp.office365.com.", "show_if": {"key": "email_via", "equals": "smtp"} },
+      { "key": "smtp_port", "label": "Port", "type": "number", "tab": "email", "min": 1, "max": 65535, "default": 587, "show_if": {"key": "email_via", "equals": "smtp"} },
+      { "key": "smtp_security", "label": "Encryption", "type": "select", "tab": "email", "options": [{"value": "tls", "label": "TLS (usually port 465)"}, {"value": "starttls", "label": "STARTTLS (usually port 587)"}, {"value": "none", "label": "None (local relay only)"}], "default": "starttls", "show_if": {"key": "email_via", "equals": "smtp"} },
+      { "key": "smtp_username", "label": "Username", "tab": "email", "show_if": {"key": "email_via", "equals": "smtp"} },
+      { "key": "smtp_password", "label": "Password", "type": "secret", "tab": "email", "help": "Many providers need an app password.", "show_if": {"key": "email_via", "equals": "smtp"} },
+      { "key": "from_email", "label": "Send from", "tab": "email", "help": "The sender address.", "show_if": {"key": "email_via", "equals": "smtp"} }
     ]
   }
 }

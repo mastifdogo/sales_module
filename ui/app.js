@@ -1736,7 +1736,7 @@ async function setupView(section) {
 			em.ready
 				? h("p", {}, em.via === "mail" ? `Sending through Ledger's mailbox (${em.from}).` : `Sending through Sales' own mail server settings as ${em.from}. Ledger has a shared mailbox (Settings → Mail) that works with any mail provider; switch to it above when it's connected.`)
 				: h("p", { style: "color:var(--warn)" }, em.problem),
-			h("p", { class: "hint" }, "Ledger's mailbox is connected, and Sales allowed to send, under ", h("a", { href: "/settings/mail", target: "_top" }, "Settings → Mail"), "."),
+			h("p", { class: "hint" }, "To connect Ledger's mailbox, or let Sales send through it, go to ", h("a", { href: "/settings/mail", target: "_top" }, "Settings → Mail"), "."),
 			h("div", { class: "actions" }, h("button", { type: "button", disabled: !em.ready, onclick: (e) => busy(e.currentTarget, testEmail) }, "Send a test email")),
 		);
 	}
