@@ -43,6 +43,7 @@ export default async function register(ctx) {
 	await ctx.orgs.forEach(async (org) => {
 		await moveSettings(ctx, h, org);
 		await copyDocumentSettings(ctx, h, org);
+		await docs.makeClearingAccounts(org);
 		await docs.recover(org);
 	});
 	dashboard.start();

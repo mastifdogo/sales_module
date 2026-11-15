@@ -565,7 +565,11 @@ async function billableDialog({ customerId, currency, invoiceId, skip }, done) {
 	if (items.length === 0) {
 		body.replaceChildren(
 			...notes,
-			h("p", { class: "muted" }, `No unbilled ${currency} items for this customer. Post costs to ${r.accounts.join(", ")} in Ledger and tag the entry with this customer to bill them here.`),
+			h(
+				"p",
+				{ class: "muted" },
+				`No unbilled ${currency} items for this customer. Post costs to ${r.clearing ? `${r.clearing.code} ${r.clearing.name}` : r.accounts.join(", ")}${r.clearing && r.accounts.length > 1 ? " (or the other accounts in Settings → Sales → Accounts)" : ""} in Ledger and tag the entry with this customer to bill them here.`,
+			),
 			h("div", { class: "actions" }, h("button", { type: "button", onclick: closeDialog }, "Close")),
 		);
 		return;
@@ -604,7 +608,7 @@ async function billableDialog({ customerId, currency, invoiceId, skip }, done) {
 	for (const b of boxes) b.onchange = update;
 	body.replaceChildren(
 		...notes,
-		h("p", { class: "hint" }, "Costs posted in Ledger to the billable-items accounts and tagged with this customer, not invoiced yet."),
+		h("p", { class: "hint" }, "Costs posted in Ledger and tagged with this customer, not invoiced yet. Items from the clearing account are taken back out of it when the invoice is posted."),
 		scroll(
 			h(
 				"table",

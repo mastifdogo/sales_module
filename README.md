@@ -33,12 +33,15 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   time an invoice, quote or estimate is emailed, its PDF is filed there
   under the customer, one per document (the latest replaces the one before).
   The document's page has a **Filed PDF** button that opens it.
-- **bill costs to customers**: list up to five "billable items" accounts
-  under Settings → Sales (e.g. *5850 Billable expenses*). Anything posted to
-  them in Ledger and tagged with a customer shows up under **+ Billable
-  items** on that customer's new invoice: tick any of them and add them as
-  one line, or each as its own line. An item can be billed only once;
-  deleting the draft or voiding the invoice frees it again.
+- **bill costs to customers**: Sales has its own clearing account, *Billable
+  costs to recharge* (one per currency, made for you). Post a cost you'll
+  pass on to it in Ledger and tag the entry with the customer; it then shows
+  under **+ Billable items** on that customer's new invoice. Tick any of
+  them and add them as one line, or each as its own line. When the invoice
+  is posted, the cost goes back out of the clearing account (so it returns
+  to zero) and anything above cost is revenue. You can also have Sales look
+  in other accounts (Settings → Sales → Accounts → Billable costs). An item
+  is billed only once; deleting the draft or voiding the invoice frees it.
 - **receive payments**: from a customer's page, enter what came in and it's
   spread over their open invoices, oldest first (you can change the split),
   and posted to the books. Partial payments are fine.
@@ -114,6 +117,10 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.14.0**: billable costs go through Sales' own clearing account,
+  *Billable costs to recharge*, which Sales makes and always looks in;
+  invoicing an item clears its cost from it. Other accounts are optional.
+  Needs Ledger 0.20.0.
 - **0.13.0**: a tidier Settings → Sales. Accounts are chosen from a list
   instead of typed as codes, grouped under Canadian dollars, US dollars and
   Billable costs, and shown only when posting to the books is on. The mail

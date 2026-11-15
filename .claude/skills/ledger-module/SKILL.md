@@ -97,22 +97,31 @@ payments to the books.
   `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
   `test/*.test.mjs` (`npm test`).
-- Needs Ledger ≥ 0.19.3. Account codes live only where Ledger renumbers
+- Needs Ledger ≥ 0.20.0. Account codes live only where Ledger renumbers
   them: settings keys with "account" (`receivable_account_cad`, …) and text
   columns ending `_account` (`taxes.cad_payable_account`,
   `categories.cad_revenue_account`, and the USD ones). The API still shows
   `accounts: { CAD, USD }`, built in SQL (`h.TAX_ACCOUNTS`,
   `h.CATEGORY_ACCOUNTS`) and written with `h.accountColumns()`. Never put a
   code in JSON or cache one.
-- Billable items (0.10.0): settings `billable_account_1`…`_5` (one code
-  each, so Ledger renumbers them). `server/billable.mjs` pages through
-  `ctx.ledger.listJournalEntries({ accountCode })` for each, keeps lines on
-  that account with a positive debit whose entry's entity is the customer's
-  (skipping reversed entries and reversals), and drops lines already billed:
-  `document_lines.billed_ledger_line_ids` on invoices that aren't void.
-  `GET /customers/:id/billable?currency=&invoice=` lists them; saving an
-  invoice re-checks every billed id (`billable.check`, 409 if taken).
-  Duplicating or converting never copies billed ids.
+- Billable items: Sales' own clearing account (`ctx.ledger.clearingAccount`,
+  key `billable_costs`, "Billable costs to recharge", asset, one per
+  currency; Ledger ≥ 0.20.0) is always looked in, plus the optional
+  settings `billable_account_1`…`_5` (account pickers, Ledger renumbers
+  them). Never store the clearing code: `billable.clearing(cur)` asks each
+  time; `makeClearingAccounts()` creates them at startup for the currencies
+  in use. `server/billable.mjs` pages through
+  `ctx.ledger.listJournalEntries({ accountCode })` for each account, keeps
+  lines with a positive debit whose entry's entity is the customer's
+  (skipping reversed entries and reversals), marks clearing ones
+  `clearing: true`, and drops lines already billed
+  (`document_lines.billed_ledger_line_ids` on invoices that aren't void).
+  `postingLines()` credits the clearing account with the cost of billed
+  clearing items and puts the rest of the line (markup, or a discount as a
+  debit) on revenue, so the clearing account returns to zero; voiding
+  reverses it. `GET /customers/:id/billable?currency=&invoice=` lists them;
+  saving an invoice re-checks every billed id (409 if taken). Duplicating
+  or converting never copies billed ids.
 - A person can change the amounts of an entry Sales posted (Ledger 0.19.5,
   `amended: true`). `entryChanges()` in `documents.mjs` compares each
   posted entry (invoice, payments) with what Sales posted and returns

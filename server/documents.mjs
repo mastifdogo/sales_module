@@ -33,6 +33,20 @@ const OPEN_QUOTE = ["draft", "sent"];
 
 export function documentRoutes(ctx, h, mail) {
 	const billable = billableItems(ctx, h);
+
+	/**
+	 * Makes Sales' billable-costs clearing account for each currency in use
+	 * (the default and the customers'), so people can post costs to it.
+	 */
+	async function makeClearingAccounts(org) {
+		try {
+			const s = await loadSettings();
+			const { rows } = await q(`SELECT DISTINCT currency FROM ${T("customers")}`);
+			for (const cur of new Set([s.default_currency, ...rows.map((r) => r.currency)])) await billable.clearing(cur);
+		} catch (e) {
+			ctx.log.warn("could not make the billable-costs clearing accounts", { err: e.message, ...(org ? { organization: org.name } : {}) });
+		}
+	}
 	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings, CUSTOMERS, TAX_ACCOUNTS, CATEGORY_ACCOUNTS } = h;
 
 	const byId = (rows) => new Map(rows.map((r) => [String(r.id), r]));
@@ -230,6 +244,15 @@ export function documentRoutes(ctx, h, mail) {
 
 	/** The ledger lines for an invoice: Dr receivable; Cr revenue per category account and each tax's account. */
 	async function postingLines(doc, totals, s) {
+		// Billed items that came from Sales' clearing account: their cost goes
+		// back to that account (clearing it); the rest of the line is revenue.
+		const fromClearing = new Map();
+		let clearingCode = null;
+		if (doc.kind === "invoice" && doc.lines.some((l) => (l.billed_ledger_line_ids ?? []).length)) {
+			const { items, clearing } = await billable.forCustomer(String(doc.customer_id), doc.currency, { exceptDoc: doc.id });
+			clearingCode = clearing?.code ?? null;
+			for (const it of items) if (it.clearing) fromClearing.set(String(it.line_id), BigInt(it.amount_cents));
+		}
 		const cur = doc.currency;
 		const receivable = s.accounts?.[cur]?.receivable;
 		if (!receivable) throw bad(`Ledger posting is on, but no receivable account is set for ${cur} (Settings → Ledger posting)`);
@@ -246,7 +269,9 @@ export function documentRoutes(ctx, h, mail) {
 						: `line ${i + 1} has no category, and no default ${cur} revenue account is set (Settings → Ledger posting)`,
 				);
 			}
-			add(acct, totals.amounts[i], cat ? cat.name : "Sales");
+			const cost = clearingCode ? (l.billed_ledger_line_ids ?? []).reduce((n, id) => n + (fromClearing.get(String(id)) ?? 0n), 0n) : 0n;
+			if (cost !== 0n) add(clearingCode, cost, "Billable costs");
+			add(acct, totals.amounts[i] - cost, cat ? cat.name : "Sales");
 		});
 		for (const t of totals.taxes) {
 			if (t.tax_cents === 0n) continue;
@@ -830,6 +855,7 @@ ${paras}
 		recordPayment,
 		deletePayment,
 		getDocument,
+		makeClearingAccounts,
 		/** An invoice left in "posting" means Ledger stopped mid-issue; put it back to draft. */
 		async recover(org = null) {
 			const stuck = await q(`UPDATE ${T("documents")} SET status = 'draft' WHERE kind = 'invoice' AND status = 'posting' RETURNING number`);
