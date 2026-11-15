@@ -114,6 +114,10 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.12.0**: Settings → Sales is split into tabs: Business, Accounts,
+  Invoices, Quotes, Estimates, Taxes and Email. Each tab saves on its own.
+  Nothing about your settings changes. Needs Ledger 0.19.6.
+
 - **0.11.0**: invoice, quote and estimate settings each have their own tab
   under Settings → Sales (below Ledger's form): number prefix and next
   number, days, printed terms and email text. Estimates now have their own
@@ -265,7 +269,7 @@ lib/pdf.mjs             PDF writer and document layout
 lib/mail.mjs            SMTP client (TLS, STARTTLS, AUTH PLAIN/LOGIN) and MIME builder
 migrations/             database schema (each file runs once; never edit a released one)
 ui/                     the page shown inside Ledger (plain HTML/JS, no build);
-                        setup.html is shown under the settings form
+                        settings-*.html are the pages on the tabs of Settings → Sales
 test/                   unit tests: npm test
 ```
 

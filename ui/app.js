@@ -1611,7 +1611,7 @@ function categoryDialog(cat, taxes, accounts, settings, done) {
 	openDialog(form);
 }
 
-// ---- setup (shown under the form on Ledger's Settings → Sales tab) ----------------------------
+// ---- setup (the pages on the tabs of Ledger's Settings → Sales) --------------------------------
 
 const SETTINGS_HREF = "/settings/m/sales";
 const settingsLink = (label = "Settings → Sales") => h("a", { href: SETTINGS_HREF, target: "_top" }, label);
@@ -1674,23 +1674,13 @@ const DOC_TABS = [
 	{ kind: "quote", label: "Quotes", days: "Valid for (days)", daysHint: "", terms: "Terms printed on quotes", placeholders: "{{number}} {{customer}} {{company}} {{total}} {{issue_date}} {{due_date}} {{valid_until}} {{business}}" },
 	{ kind: "estimate", label: "Estimates", days: "Valid for (days)", daysHint: "", terms: "Terms printed on estimates", placeholders: "{{number}} {{customer}} {{company}} {{total}} {{issue_date}} {{due_date}} {{valid_until}} {{business}}" },
 ];
-let docTab = "invoice";
 
-/** A tab each for invoices, quotes and estimates: numbering, days, printed terms, email text. */
-async function documentSettingsTabs(admin) {
+/** Settings for one kind of document (invoice, quote or estimate): numbering, days, printed terms, email text. */
+async function documentSettingsForm(kind, admin) {
 	const { data } = await api("/document-settings");
-	const byKind = new Map(data.map((d) => [d.kind, d]));
-	const panel = h("div", { role: "tabpanel" });
-	const bar = h("div", { class: "tabs subtabs", role: "tablist" });
-	const show = (kind) => {
-		docTab = kind;
-		const t = DOC_TABS.find((x) => x.kind === kind);
-		const d = byKind.get(kind);
-		for (const a of bar.children) {
-			const on = a.dataset.kind === kind;
-			a.classList.toggle("active", on);
-			a.setAttribute("aria-selected", String(on));
-		}
+	const t = DOC_TABS.find((x) => x.kind === kind);
+	const holder = h("div", {});
+	const show = (d) => {
 		const opts = { disabled: !admin };
 		const prefix = input("number_prefix", d.number_prefix, { maxlength: 20, ...opts });
 		const next = input("next_number", d.next_number, { type: "number", min: 1, ...opts });
@@ -1714,73 +1704,69 @@ async function documentSettingsTabs(admin) {
 			e.preventDefault();
 			busy(e.submitter, async () => {
 				const saved = await api(`/document-settings/${kind}`, { method: "PUT", body: formData(form) });
-				byKind.set(kind, saved);
 				flash(`${t.label} settings saved.`);
-				show(kind);
+				show(saved);
 			});
 		};
-		panel.replaceChildren(form);
+		holder.replaceChildren(form);
 	};
-	for (const t of DOC_TABS) {
-		bar.append(
-			h("a", { href: "#", role: "tab", "data-kind": t.kind, onclick: (e) => (e.preventDefault(), show(t.kind)) }, t.label),
-		);
-	}
-	show(docTab);
-	return h("div", {}, bar, panel);
+	show(data.find((d) => d.kind === kind));
+	return holder;
 }
 
-async function setupView() {
-	const [s, accounts, taxes] = await Promise.all([api("/settings"), loadAccounts(), api("/taxes")]);
-	const reload = () => setupView().catch(fail);
+/**
+ * One section of Sales' settings, each on its own tab of Settings → Sales
+ * (the tabs are Ledger's, declared in ledger-module.json): "email",
+ * "invoice", "quote", "estimate" or "taxes".
+ */
+async function setupView(section) {
+	const s = await api("/settings");
 	const admin = s.is_admin;
-	const edit = (t) => (admin ? h("button", { type: "button", class: "link", onclick: () => taxDialog(t, accounts, reload) }, "Edit") : null);
+	const onlyAdmin = admin ? null : h("p", { class: "muted" }, "Only an admin can change these.");
 
-	const documents = await documentSettingsTabs(admin);
-
-	const em = s.email;
-	render(
-		h(
-			"fieldset",
-			{},
-			h("legend", {}, "Email"),
+	if (section === "email") {
+		const em = s.email;
+		const testEmail = async () => {
+			const to = prompt("Send a test email to:", em.from || s.business_email);
+			if (!to) return;
+			const r = await api("/settings/test-email", { method: "POST", body: { to } });
+			flash(`Test email sent to ${r.to.join(", ")}. ${r.server_reply}`);
+		};
+		return render(
 			em.ready
-				? h("p", {}, em.via === "mail" ? `Sending through Ledger's mailbox (${em.from}).` : `Sending through Sales' own mail server settings as ${em.from}. Ledger now has a shared mailbox (Settings → Mail) that works with any mail provider; switch to it in the form above when it's connected.`)
+				? h("p", {}, em.via === "mail" ? `Sending through Ledger's mailbox (${em.from}).` : `Sending through Sales' own mail server settings as ${em.from}. Ledger has a shared mailbox (Settings → Mail) that works with any mail provider; switch to it above when it's connected.`)
 				: h("p", { style: "color:var(--warn)" }, em.problem),
 			h("p", { class: "hint" }, "Ledger's mailbox is connected, and Sales allowed to send, under ", h("a", { href: "/settings/mail", target: "_top" }, "Settings → Mail"), "."),
 			h("div", { class: "actions" }, h("button", { type: "button", disabled: !em.ready, onclick: (e) => busy(e.currentTarget, testEmail) }, "Send a test email")),
-		),
-		h("fieldset", {}, h("legend", {}, "Invoices, quotes and estimates"), documents),
-		h(
-			"fieldset",
-			{},
-			h("legend", {}, "Taxes"),
-			h("p", { class: "hint" }, "GST is set up and on. Turn on the others you collect (HST, PST, QST) and set the account each is owed to. A line can carry several, e.g. GST + PST."),
-			table(
-				["Tax", ["Rate", "right"], "CAD account", "USD account", "Status", ""],
-				taxes.data.map((t) =>
-					h(
-						"tr",
-						{},
-						h("td", {}, h("strong", {}, t.name), t.is_default ? h("span", { class: "muted" }, " (default)") : null),
-						h("td", { class: "num" }, pct(t.rate)),
-						h("td", {}, t.accounts.CAD ?? h("span", { class: "muted" }, "—")),
-						h("td", {}, t.accounts.USD ?? h("span", { class: "muted" }, "—")),
-						h("td", {}, t.active ? "on" : h("span", { class: "muted" }, "off")),
-						h("td", { class: "right" }, edit(t)),
-					),
+		);
+	}
+
+	if (DOC_TABS.some((t) => t.kind === section)) return render(await documentSettingsForm(section, admin), onlyAdmin);
+
+	// Taxes.
+	const [accounts, taxes] = await Promise.all([loadAccounts(), api("/taxes")]);
+	const reload = () => setupView(section).catch(fail);
+	const edit = (t) => (admin ? h("button", { type: "button", class: "link", onclick: () => taxDialog(t, accounts, reload) }, "Edit") : null);
+	render(
+		h("p", { class: "hint" }, "GST is set up and on. Turn on the others you collect (HST, PST, QST) and set the account each is owed to. A line can carry several, e.g. GST + PST."),
+		table(
+			["Tax", ["Rate", "right"], "CAD account", "USD account", "Status", ""],
+			taxes.data.map((t) =>
+				h(
+					"tr",
+					{},
+					h("td", {}, h("strong", {}, t.name), t.is_default ? h("span", { class: "muted" }, " (default)") : null),
+					h("td", { class: "num" }, pct(t.rate)),
+					h("td", {}, t.accounts.CAD ?? h("span", { class: "muted" }, "—")),
+					h("td", {}, t.accounts.USD ?? h("span", { class: "muted" }, "—")),
+					h("td", {}, t.active ? "on" : h("span", { class: "muted" }, "off")),
+					h("td", { class: "right" }, edit(t)),
 				),
 			),
-			admin ? h("div", { class: "actions" }, h("button", { type: "button", onclick: () => taxDialog(null, accounts, reload) }, "+ Add tax")) : null,
 		),
-		admin ? null : h("p", { class: "muted" }, "Only an admin can change these."),
+		admin ? h("div", { class: "actions" }, h("button", { type: "button", onclick: () => taxDialog(null, accounts, reload) }, "+ Add tax")) : null,
+		onlyAdmin,
 	);
-	async function testEmail() {
-		const to = prompt("Send a test email to:", em.from || s.business_email);
-		if (!to) return;
-		const r = await api("/settings/test-email", { method: "POST", body: { to } });
-		flash(`Test email sent to ${r.to.join(", ")}. ${r.server_reply}`);
-	}
 }
 
 // ---- start ----------------------------------------------------------------------------------------
@@ -1793,7 +1779,7 @@ function openFromQuery() {
 }
 
 if (document.body.dataset.page === "setup") {
-	setupView().catch(fail);
+	setupView(document.body.dataset.section).catch(fail);
 } else {
 	openFromQuery();
 	route();

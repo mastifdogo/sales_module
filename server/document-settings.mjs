@@ -1,9 +1,8 @@
 // Settings for each kind of document (invoice, quote, estimate): number
 // prefix and next number, days (payment terms, or valid for), terms printed
 // on the PDF, and the email subject and message. Up to 0.10.0 these were in
-// Ledger's settings form; from 0.11.0 they're in Sales' own table and shown
-// as a tab each below that form (ui/setup.html), because Ledger's form can't
-// make tabs.
+// Ledger's settings form; from 0.11.0 they're in Sales' own table, and from
+// 0.12.0 each kind has its own tab of Settings → Sales (ui/settings-*.html).
 
 export const DOC_KINDS = ["invoice", "quote", "estimate"];
 

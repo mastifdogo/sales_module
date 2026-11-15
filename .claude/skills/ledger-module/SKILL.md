@@ -167,14 +167,18 @@ payments to the books.
   removed matched payment unlinks its deposit.
 - Settings are the manifest's `settings.fields`
   (Ledger's form under Settings → Sales), read through `loadSettings()` in
-  `server/common.mjs`. What a form can't hold (taxes, the email check, and
-  the per-document tabs) is `ui/setup.html`, shown under the form.
+  `server/common.mjs`. The page is split into Ledger's settings tabs
+  (`settings.tabs` in the manifest, Ledger 0.19.6): Business, Accounts and
+  Email hold form fields (each field names its tab); Invoices, Quotes,
+  Estimates and Taxes, and the email check on the Email tab, are pages of
+  ours, `ui/settings-*.html`, each a shell for one section of `setupView()`
+  in `ui/app.js` (`data-section`). A new setting goes on the tab it belongs
+  to; don't draw a tab strip of our own.
 - Invoice, quote and estimate settings (prefix, days, printed terms, email
   subject and message) are in Sales' own `document_settings` table, one row
-  per kind, edited in the Invoices / Quotes / Estimates tabs of `setup.html`
+  per kind, edited on the Invoices / Quotes / Estimates tabs
   (`GET /document-settings`, admin-only `PUT /document-settings/:kind`, which
-  also sets the next number). The user asked for tabs, which Ledger's flat
-  form can't draw, so this is a deliberate exception to "use Ledger's form".
+  also sets the next number).
   `loadSettings()` still returns them under the old keys (`invoice_prefix`,
   `quote_valid_days`, `estimate_email_subject`, …). `copyDocumentSettings()`
   copied each organization's values from Ledger's stored form (read from

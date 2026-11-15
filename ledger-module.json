@@ -1,9 +1,9 @@
 {
   "id": "sales",
   "name": "Sales",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Invoices, quotes and estimates with GST and other sales taxes, customer records and sales categories that track to your revenue accounts. Emails PDFs through Ledger's mailbox, files them in Ledger's Documents, puts overdue invoices and follow-ups on the dashboard, and can post invoices and payments to the books.",
-  "ledger": ">=0.19.3",
+  "ledger": ">=0.19.6",
   "server": "server.mjs",
   "ui": "ui",
   "nav": {
@@ -18,6 +18,44 @@
     ]
   },
   "settings": {
+    "tabs": [
+      {
+        "id": "business",
+        "label": "Business",
+        "help": "Who you are, as printed on every invoice, quote and estimate."
+      },
+      {
+        "id": "accounts",
+        "label": "Accounts",
+        "help": "The accounts invoices, payments and billable costs are posted to. Account codes are the ones under Accounts."
+      },
+      {
+        "id": "invoices",
+        "label": "Invoices",
+        "page": "settings-invoices.html"
+      },
+      {
+        "id": "quotes",
+        "label": "Quotes",
+        "page": "settings-quotes.html"
+      },
+      {
+        "id": "estimates",
+        "label": "Estimates",
+        "page": "settings-estimates.html"
+      },
+      {
+        "id": "taxes",
+        "label": "Taxes",
+        "page": "settings-taxes.html"
+      },
+      {
+        "id": "email",
+        "label": "Email",
+        "help": "How invoices, quotes and estimates are emailed.",
+        "page": "settings-email.html"
+      }
+    ],
     "fields": [
       {
         "key": "business_name",
@@ -68,56 +106,68 @@
         "label": "Post invoices and payments to the books",
         "type": "boolean",
         "default": false,
-        "help": "Issuing posts Dr receivable / Cr category revenue and each tax; payments post Dr bank / Cr receivable."
+        "help": "Issuing posts Dr receivable / Cr category revenue and each tax; payments post Dr bank / Cr receivable.",
+        "tab": "accounts"
       },
       {
         "key": "receivable_account_cad",
         "label": "Receivable account (CAD)",
-        "help": "An asset account code in CAD, e.g. 1200."
+        "help": "An asset account code in CAD, e.g. 1200.",
+        "tab": "accounts"
       },
       {
         "key": "revenue_account_cad",
         "label": "Default revenue account (CAD)",
-        "help": "For lines without a category, or a category with no account in this currency."
+        "help": "For lines without a category, or a category with no account in this currency.",
+        "tab": "accounts"
       },
       {
         "key": "bank_account_cad",
-        "label": "Bank account for payments (CAD)"
+        "label": "Bank account for payments (CAD)",
+        "tab": "accounts"
       },
       {
         "key": "receivable_account_usd",
         "label": "Receivable account (USD)",
-        "help": "An asset account code in USD, e.g. 1200."
+        "help": "An asset account code in USD, e.g. 1200.",
+        "tab": "accounts"
       },
       {
         "key": "revenue_account_usd",
         "label": "Default revenue account (USD)",
-        "help": "For lines without a category, or a category with no account in this currency."
+        "help": "For lines without a category, or a category with no account in this currency.",
+        "tab": "accounts"
       },
       {
         "key": "bank_account_usd",
-        "label": "Bank account for payments (USD)"
+        "label": "Bank account for payments (USD)",
+        "tab": "accounts"
       },
       {
         "key": "billable_account_1",
         "label": "Billable items account 1",
-        "help": "Account codes where billable costs are posted (e.g. 5850 Billable expenses). An entry posted to one of these accounts and tagged with a customer in Ledger can be added to that customer's next invoice, each item as its own line or several as one line. Up to five accounts; leave the rest empty."
+        "help": "Account codes where billable costs are posted (e.g. 5850 Billable expenses). An entry posted to one of these accounts and tagged with a customer in Ledger can be added to that customer's next invoice, each item as its own line or several as one line. Up to five accounts; leave the rest empty.",
+        "tab": "accounts"
       },
       {
         "key": "billable_account_2",
-        "label": "Billable items account 2"
+        "label": "Billable items account 2",
+        "tab": "accounts"
       },
       {
         "key": "billable_account_3",
-        "label": "Billable items account 3"
+        "label": "Billable items account 3",
+        "tab": "accounts"
       },
       {
         "key": "billable_account_4",
-        "label": "Billable items account 4"
+        "label": "Billable items account 4",
+        "tab": "accounts"
       },
       {
         "key": "billable_account_5",
-        "label": "Billable items account 5"
+        "label": "Billable items account 5",
+        "tab": "accounts"
       },
       {
         "key": "email_via",
@@ -133,27 +183,32 @@
             "label": "Sales' own mail server settings (older setups)"
           }
         ],
-        "default": "gmail"
+        "default": "gmail",
+        "tab": "email"
       },
       {
         "key": "from_name",
         "label": "Sender name",
-        "help": "Defaults to the business name."
+        "help": "Defaults to the business name.",
+        "tab": "email"
       },
       {
         "key": "reply_to",
-        "label": "Reply-to address (optional)"
+        "label": "Reply-to address (optional)",
+        "tab": "email"
       },
       {
         "key": "bcc_self",
         "label": "Send me a copy (Bcc)",
         "type": "boolean",
-        "default": false
+        "default": false,
+        "tab": "email"
       },
       {
         "key": "smtp_host",
         "label": "SMTP server",
-        "help": "Only for “My own mail server”. Gmail: smtp.gmail.com; Microsoft 365: smtp.office365.com."
+        "help": "Only for “My own mail server”. Gmail: smtp.gmail.com; Microsoft 365: smtp.office365.com.",
+        "tab": "email"
       },
       {
         "key": "smtp_port",
@@ -161,7 +216,8 @@
         "type": "number",
         "min": 1,
         "max": 65535,
-        "default": 587
+        "default": 587,
+        "tab": "email"
       },
       {
         "key": "smtp_security",
@@ -181,24 +237,27 @@
             "label": "None (local relay only)"
           }
         ],
-        "default": "starttls"
+        "default": "starttls",
+        "tab": "email"
       },
       {
         "key": "smtp_username",
-        "label": "SMTP username"
+        "label": "SMTP username",
+        "tab": "email"
       },
       {
         "key": "smtp_password",
         "label": "SMTP password",
         "type": "secret",
-        "help": "Many providers need an app password here."
+        "help": "Many providers need an app password here.",
+        "tab": "email"
       },
       {
         "key": "from_email",
         "label": "Send from (SMTP)",
-        "help": "The sender address when using your own mail server."
+        "help": "The sender address when using your own mail server.",
+        "tab": "email"
       }
-    ],
-    "page": "setup.html"
+    ]
   }
 }
