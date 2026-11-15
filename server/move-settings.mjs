@@ -3,13 +3,13 @@
 // start after upgrading, copy the old values across once. Both are per
 // organization (Ledger ≥ 0.11.1): call this inside ctx.orgs.forEach.
 
+// (Prefixes, days, terms and email text went to document_settings in 0.11.0:
+// copyDocumentSettings() takes them from this table directly.)
 const TEXT = [
 	"business_name", "business_address", "business_email", "business_phone", "tax_id_label", "tax_id", "footer",
-	"invoice_prefix", "quote_prefix", "estimate_prefix", "default_currency", "quote_terms", "estimate_terms",
-	"smtp_host", "smtp_security", "smtp_username", "smtp_password", "from_name", "from_email", "reply_to",
-	"email_subject", "email_body", "quote_email_subject", "quote_email_body",
+	"default_currency", "smtp_host", "smtp_security", "smtp_username", "smtp_password", "from_name", "from_email", "reply_to",
 ];
-const NUMBERS = ["default_terms_days", "quote_valid_days", "estimate_valid_days", "smtp_port"];
+const NUMBERS = ["smtp_port"];
 const BOOLEANS = ["post_to_ledger", "bcc_self"];
 
 export async function moveSettings(ctx, h, org = null) {

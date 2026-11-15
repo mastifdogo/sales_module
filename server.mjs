@@ -8,6 +8,7 @@ import { helpers } from "./server/common.mjs";
 import { csvImport, importRoutes } from "./server/imports.mjs";
 import { customerRoutes } from "./server/customers.mjs";
 import { dashboardSync } from "./server/dashboard.mjs";
+import { copyDocumentSettings, documentSettingsRoutes } from "./server/document-settings.mjs";
 import { documentRoutes } from "./server/documents.mjs";
 import { mailHelpers } from "./server/email.mjs";
 import { moveSettings } from "./server/move-settings.mjs";
@@ -29,6 +30,7 @@ export default async function register(ctx) {
 
 	const mail = mailHelpers(routes, h);
 	settingsRoutes(routes, h, mail);
+	documentSettingsRoutes(routes, h);
 	catalogRoutes(routes, h);
 	const customers = customerRoutes(routes, h);
 	const docs = documentRoutes(routes, h, mail);
@@ -40,6 +42,7 @@ export default async function register(ctx) {
 	// and (Ledger ≥ 0.11.1) its own settings, so visit each one.
 	await ctx.orgs.forEach(async (org) => {
 		await moveSettings(ctx, h, org);
+		await copyDocumentSettings(ctx, h, org);
 		await docs.recover(org);
 	});
 	dashboard.start();
