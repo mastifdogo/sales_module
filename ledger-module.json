@@ -1,9 +1,9 @@
 {
   "id": "sales",
   "name": "Sales",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Invoices, quotes and estimates with GST and other sales taxes, customer records and sales categories that track to your revenue accounts. Emails PDFs through Ledger's mailbox, files them in Ledger's Documents, puts overdue invoices and follow-ups on the dashboard, and can post invoices and payments to the books.",
-  "ledger": ">=0.19.0",
+  "ledger": ">=0.19.3",
   "server": "server.mjs",
   "ui": "ui",
   "nav": {

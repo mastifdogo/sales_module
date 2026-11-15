@@ -562,6 +562,14 @@ async function docView(kind, id) {
 		const f = await api(`${path}/pdf`);
 		saveBase64(f.filename, f.content_type, f.content_base64);
 	}));
+	for (const c of doc.entry_changes ?? []) {
+		flash(
+			c.differs
+				? `${c.what} was changed in Ledger's journal: the entry now totals ${money(c.now_cents, doc.currency)}, but Sales posted ${money(c.posted_cents, doc.currency)}. Sales' record hasn't changed; check which is right.`
+				: `${c.what} was edited in Ledger's journal (same total as Sales posted).`,
+			c.differs ? "error" : "ok",
+		);
+	}
 	if (doc.pdf_url) actions.push(h("a", { class: "button", href: doc.pdf_url, target: "_blank", rel: "noopener", title: "The PDF as last issued or emailed, in Ledger's Documents" }, "Filed PDF"));
 	if (isInvoice && doc.status === "open") actions.push(act("Record payment", () => paymentDialog(doc, reload)));
 	actions.push(h("span", { class: "spacer" }));

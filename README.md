@@ -82,7 +82,7 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.19.0 or newer** (Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
+Needs **Ledger 0.19.3 or newer** (renumbered accounts, Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
 "+ New account…", journal entry links, settings per organization, plus the
 settings form, Gmail, search and user roles from earlier versions). In
 Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
@@ -108,6 +108,12 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.9.0**: renumbering an account in Ledger no longer breaks Sales: the
+  revenue accounts of categories and the accounts taxes are owed to follow
+  the new code (they moved out of a JSON map into columns Ledger updates).
+  If someone changes the amounts of an entry Sales posted, the invoice page
+  says so and shows both totals; Sales' own record isn't touched. Needs
+  Ledger 0.19.3.
 - **0.8.0**: PDFs are filed in Ledger's Documents when issued or emailed
   (a **Filed PDF** button opens the one on file). Mail goes through
   Ledger's shared mailbox under Settings → Mail, whatever provider it is;

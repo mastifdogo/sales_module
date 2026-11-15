@@ -97,7 +97,18 @@ payments to the books.
   `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
   `test/*.test.mjs` (`npm test`).
-- Needs Ledger ≥ 0.19.0. PDFs: `filePdf()` in `documents.mjs` files a
+- Needs Ledger ≥ 0.19.3. Account codes live only where Ledger renumbers
+  them: settings keys with "account" (`receivable_account_cad`, …) and text
+  columns ending `_account` (`taxes.cad_payable_account`,
+  `categories.cad_revenue_account`, and the USD ones). The API still shows
+  `accounts: { CAD, USD }`, built in SQL (`h.TAX_ACCOUNTS`,
+  `h.CATEGORY_ACCOUNTS`) and written with `h.accountColumns()`. Never put a
+  code in JSON or cache one.
+- A person can change the amounts of an entry Sales posted (Ledger 0.19.5,
+  `amended: true`). `entryChanges()` in `documents.mjs` compares each
+  posted entry (invoice, payments) with what Sales posted and returns
+  `entry_changes`; the invoice page warns. Sales never rewrites either.
+- PDFs: `filePdf()` in `documents.mjs` files a
   document's PDF in Ledger's PDF store (`ctx.documents.add`, origin
   "created", kind "invoice" or "other", with the customer's entity) when an
   invoice is issued and whenever a document is emailed, keeps the id in

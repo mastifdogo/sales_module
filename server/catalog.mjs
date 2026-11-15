@@ -4,12 +4,12 @@
 import { today } from "../lib/money.mjs";
 
 export function catalogRoutes(ctx, h) {
-	const { T, q, bad, notFound, conflict, body, text, bool, rate, id, accountMap, checkTaxIds, requireAdmin } = h;
+	const { T, q, bad, notFound, conflict, body, text, bool, rate, id, accountColumns, checkTaxIds, requireAdmin, TAX_ACCOUNTS, CATEGORY_ACCOUNTS } = h;
 
 	// ---- taxes ---------------------------------------------------------------
 
 	async function getTax(tid) {
-		const { rows } = await q(`SELECT * FROM ${T("taxes")} WHERE id = $1`, [tid]);
+		const { rows } = await q(`SELECT *, ${TAX_ACCOUNTS} FROM ${T("taxes")} WHERE id = $1`, [tid]);
 		if (!rows[0]) throw notFound("tax");
 		return rows[0];
 	}
@@ -18,7 +18,7 @@ export function catalogRoutes(ctx, h) {
 		const out = {};
 		if (!partial || "name" in o) out.name = text(o, "name", 30, { required: true });
 		if (!partial || "rate" in o) out.rate = rate(o.rate, "rate");
-		if (!partial || "accounts" in o) out.accounts = JSON.stringify(await accountMap(o.accounts, "accounts"));
+		if (!partial || "accounts" in o) Object.assign(out, await accountColumns(o.accounts, "accounts", "payable"));
 		if ("active" in o) out.active = bool(o.active, "active");
 		if ("position" in o) out.position = h.intIn(o.position, "position", 0, 1000);
 		// Whether new lines get this tax unless the category or customer says otherwise.
@@ -32,7 +32,7 @@ export function catalogRoutes(ctx, h) {
 	};
 
 	ctx.route("GET", "/taxes", async () => {
-		const { rows } = await q(`SELECT * FROM ${T("taxes")} ORDER BY position, id`);
+		const { rows } = await q(`SELECT *, ${TAX_ACCOUNTS} FROM ${T("taxes")} ORDER BY position, id`);
 		return { data: rows };
 	});
 
@@ -81,7 +81,7 @@ export function catalogRoutes(ctx, h) {
 		const out = {};
 		if (!partial || "name" in o) out.name = text(o, "name", 100, { required: true });
 		if (!partial || "description" in o) out.description = text(o, "description", 500);
-		if (!partial || "accounts" in o) out.accounts = JSON.stringify(await accountMap(o.accounts, "accounts"));
+		if (!partial || "accounts" in o) Object.assign(out, await accountColumns(o.accounts, "accounts", "revenue"));
 		if (!partial || "tax_ids" in o) out.tax_ids = o.tax_ids === null || o.tax_ids === undefined ? null : await checkTaxIds(o.tax_ids, "tax_ids");
 		if ("active" in o) out.active = bool(o.active, "active");
 		return out;
@@ -110,14 +110,14 @@ export function catalogRoutes(ctx, h) {
 	}
 
 	async function getCategory(cid) {
-		const { rows } = await q(`SELECT * FROM ${T("categories")} WHERE id = $1`, [cid]);
+		const { rows } = await q(`SELECT *, ${CATEGORY_ACCOUNTS} FROM ${T("categories")} WHERE id = $1`, [cid]);
 		if (!rows[0]) throw notFound("category");
 		return rows[0];
 	}
 
 	ctx.route("GET", "/categories", async (req) => {
 		const { from, to } = range(req);
-		const [{ rows }, sales] = await Promise.all([q(`SELECT * FROM ${T("categories")} ORDER BY NOT active, lower(name), id`), categorySales(from, to)]);
+		const [{ rows }, sales] = await Promise.all([q(`SELECT *, ${CATEGORY_ACCOUNTS} FROM ${T("categories")} ORDER BY NOT active, lower(name), id`), categorySales(from, to)]);
 		const salesOf = (cid) => sales.filter((s) => String(s.category_id) === String(cid)).map((s) => ({ currency: s.currency, cents: s.cents }));
 		return { from, to, data: rows.map((c) => ({ ...c, sales: salesOf(c.id) })), uncategorized: salesOf(null) };
 	});
