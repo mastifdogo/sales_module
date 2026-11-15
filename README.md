@@ -33,6 +33,12 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   time an invoice, quote or estimate is emailed, its PDF is filed there
   under the customer, one per document (the latest replaces the one before).
   The document's page has a **Filed PDF** button that opens it.
+- **bill costs to customers**: list up to five "billable items" accounts
+  under Settings → Sales (e.g. *5850 Billable expenses*). Anything posted to
+  them in Ledger and tagged with a customer shows up under **+ Billable
+  items** on that customer's new invoice: tick any of them and add them as
+  one line, or each as its own line. An item can be billed only once;
+  deleting the draft or voiding the invoice frees it again.
 - **receive payments**: from a customer's page, enter what came in and it's
   spread over their open invoices, oldest first (you can change the split),
   and posted to the books. Partial payments are fine.
@@ -108,6 +114,10 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.10.0**: billable items. Set the accounts under Settings → Sales;
+  costs posted to them and tagged with a customer can be added to that
+  customer's invoice, individually or combined into one line, and are then
+  marked as billed.
 - **0.9.0**: renumbering an account in Ledger no longer breaks Sales: the
   revenue accounts of categories and the accounts taxes are owed to follow
   the new code (they moved out of a JSON map into columns Ledger updates).

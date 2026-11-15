@@ -1,7 +1,7 @@
 {
   "id": "sales",
   "name": "Sales",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Invoices, quotes and estimates with GST and other sales taxes, customer records and sales categories that track to your revenue accounts. Emails PDFs through Ledger's mailbox, files them in Ledger's Documents, puts overdue invoices and follow-ups on the dashboard, and can post invoices and payments to the books.",
   "ledger": ">=0.19.3",
   "server": "server.mjs",
@@ -12,7 +12,10 @@
   },
   "migrations": "migrations",
   "files": {
-    "accepts": ["customer", "entity"]
+    "accepts": [
+      "customer",
+      "entity"
+    ]
   },
   "settings": {
     "fields": [
@@ -145,6 +148,27 @@
       {
         "key": "bank_account_usd",
         "label": "Bank account for payments (USD)"
+      },
+      {
+        "key": "billable_account_1",
+        "label": "Billable items account 1",
+        "help": "Account codes where billable costs are posted (e.g. 5850 Billable expenses). An entry posted to one of these accounts and tagged with a customer in Ledger can be added to that customer's next invoice, each item as its own line or several as one line. Up to five accounts; leave the rest empty."
+      },
+      {
+        "key": "billable_account_2",
+        "label": "Billable items account 2"
+      },
+      {
+        "key": "billable_account_3",
+        "label": "Billable items account 3"
+      },
+      {
+        "key": "billable_account_4",
+        "label": "Billable items account 4"
+      },
+      {
+        "key": "billable_account_5",
+        "label": "Billable items account 5"
       },
       {
         "key": "email_via",

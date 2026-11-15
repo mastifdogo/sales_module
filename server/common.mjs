@@ -130,6 +130,7 @@ export function helpers(ctx) {
 			default_tax_ids: defaults.rows.map((r) => r.id),
 			post_to_ledger: v.post_to_ledger === true,
 			accounts,
+			billable_accounts: [1, 2, 3, 4, 5].map((n) => str(`billable_account_${n}`)).filter((c, i, all) => c && all.indexOf(c) === i),
 			email_via: v.email_via === "smtp" ? "smtp" : "gmail",
 			smtp_host: str("smtp_host"),
 			smtp_port: num("smtp_port", 587),

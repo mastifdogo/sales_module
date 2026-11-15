@@ -424,7 +424,12 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 			"tr",
 			{},
 			h("td", { class: "cat", "data-label": "Category" }, catSel),
-			h("td", { class: "desc" }, textarea("description", l.description ?? "", { rows: 1, placeholder: "Description", required: true })),
+			h(
+				"td",
+				{ class: "desc" },
+				textarea("description", l.description ?? "", { rows: 1, placeholder: "Description", required: true }),
+				(l.billed_ledger_line_ids ?? []).length ? h("div", { class: "hint" }, `Bills ${l.billed_ledger_line_ids.length} billable item${l.billed_ledger_line_ids.length === 1 ? "" : "s"} from Ledger`) : null,
+			),
 			h("td", { class: "qty", "data-label": "Qty" }, input("quantity", l.quantity_text ?? "1", { inputmode: "decimal" })),
 			h("td", { class: "price", "data-label": "Unit price" }, input("unit_price", l.unit_price_cents !== undefined ? fmtDec(l.unit_price_cents, 2) : "", { inputmode: "decimal", placeholder: "0.00" })),
 			h("td", { class: "tax", "data-label": "Taxes" }, picker.el),
@@ -432,6 +437,7 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 			h("td", { class: "rm" }, h("button", { type: "button", class: "link", title: "Remove line", "aria-label": "Remove line", onclick: () => (row.remove(), recalc()) }, "✕")),
 		);
 		row._taxes = picker;
+		row._billed = (l.billed_ledger_line_ids ?? []).map(String);
 		row._touched = Boolean(existing && l.description !== undefined);
 		catSel.onchange = () => {
 			if (!row._touched || catById.get(catSel.value)?.tax_ids) picker.set(defaultTaxes(catSel.value));
@@ -443,7 +449,7 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 	function readLines() {
 		return [...linesBody.children].map((tr) => {
 			const get = (n) => tr.querySelector(`[name="${n}"]`).value;
-			return { category_id: get("category_id") || null, description: get("description"), quantity: get("quantity"), unit_price: get("unit_price"), tax_ids: tr._taxes.get() };
+			return { category_id: get("category_id") || null, description: get("description"), quantity: get("quantity"), unit_price: get("unit_price"), tax_ids: tr._taxes.get(), billed_ledger_line_ids: tr._billed };
 		});
 	}
 	function recalc() {
@@ -504,6 +510,26 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 			"div",
 			{ class: "actions" },
 			h("button", { type: "button", onclick: () => (addLine(), recalc()) }, "+ Add line"),
+			kind === "invoice" && settings.billable_accounts?.length
+				? h(
+						"button",
+						{
+							type: "button",
+							onclick: () => {
+								if (!customerSel.value) return flash("Choose a customer first.", "error");
+								const onForm = new Set([...linesBody.children].flatMap((tr) => tr._billed ?? []));
+								billableDialog({ customerId: customerSel.value, currency: cur.value, invoiceId: existing?.id ?? null, skip: onForm }, (lines) => {
+									// An empty first line is replaced rather than left above them.
+									const first = linesBody.children[0];
+									if (linesBody.children.length === 1 && !first.querySelector("[name=description]").value && !first.querySelector("[name=unit_price]").value) first.remove();
+									for (const l of lines) addLine(l);
+									recalc();
+								});
+							},
+						},
+						"+ Billable items",
+					)
+				: null,
 			cats.data.length ? null : h("span", { class: "hint" }, h("a", { href: "#/categories" }, "Add categories"), " to track sales to revenue accounts."),
 		),
 		h("table", { class: "totals" }, totals),
@@ -517,6 +543,93 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 		),
 	);
 	render(h("h1", {}, existing ? `Edit ${existing.number}` : `New ${K.label.toLowerCase()}`), form);
+}
+
+/**
+ * A customer's billable items (posted in Ledger to the billable-items accounts
+ * and tagged with them): tick any of them, then add them as one line or each
+ * as its own line. `done(lines)` gets the new lines.
+ */
+async function billableDialog({ customerId, currency, invoiceId, skip }, done) {
+	const body = h("div", {}, h("p", { class: "muted" }, "Looking for billable items…"));
+	openDialog(h("h2", {}, "Billable items"), body);
+	let r;
+	try {
+		r = await api(`/customers/${customerId}/billable?${new URLSearchParams({ currency, ...(invoiceId ? { invoice: invoiceId } : {}) })}`);
+	} catch (e) {
+		body.replaceChildren(h("p", { style: "color:var(--danger)" }, e.message), h("div", { class: "actions" }, h("button", { type: "button", onclick: closeDialog }, "Close")));
+		return;
+	}
+	const items = r.items.filter((i) => !skip.has(i.line_id));
+	const notes = r.problems.map((p) => h("p", { style: "color:var(--warn)" }, p));
+	if (items.length === 0) {
+		body.replaceChildren(
+			...notes,
+			h("p", { class: "muted" }, `No unbilled ${currency} items for this customer. Post costs to ${r.accounts.join(", ")} in Ledger and tag the entry with this customer to bill them here.`),
+			h("div", { class: "actions" }, h("button", { type: "button", onclick: closeDialog }, "Close")),
+		);
+		return;
+	}
+	const boxes = items.map((it) => h("input", { type: "checkbox", checked: true, "aria-label": `Bill ${it.description || it.date}` }));
+	const total = h("strong");
+	const chosen = () => items.filter((_, i) => boxes[i].checked);
+	const update = () => {
+		const c = chosen();
+		total.textContent = `${c.length} of ${items.length} selected · ${money(c.reduce((n, i) => n + BigInt(i.amount_cents), 0n), currency)}`;
+		for (const b of buttons) b.disabled = c.length === 0;
+	};
+	const label = (it) => [it.description || "Billable item", it.date].join(" · ");
+	const buttons = [
+		h("button", {
+			type: "button",
+			class: "primary",
+			onclick: () => {
+				const c = chosen();
+				const sum = c.reduce((n, i) => n + BigInt(i.amount_cents), 0n);
+				const description = c.length === 1 ? label(c[0]) : ["Billable items:", ...c.map((i) => `• ${label(i)} – ${money(i.amount_cents, currency)}`)].join("\n").slice(0, 1000);
+				closeDialog();
+				done([{ description, quantity_text: "1", unit_price_cents: sum.toString(), billed_ledger_line_ids: c.map((i) => i.line_id) }]);
+			},
+		}, "Add as one line"),
+		h("button", {
+			type: "button",
+			onclick: () => {
+				const c = chosen();
+				closeDialog();
+				done(c.map((i) => ({ description: label(i), quantity_text: "1", unit_price_cents: i.amount_cents, billed_ledger_line_ids: [i.line_id] })));
+			},
+		}, "Add each as its own line"),
+	];
+	const all = h("input", { type: "checkbox", checked: true, "aria-label": "Select all", onchange: (e) => (boxes.forEach((b) => (b.checked = e.target.checked)), update()) });
+	for (const b of boxes) b.onchange = update;
+	body.replaceChildren(
+		...notes,
+		h("p", { class: "hint" }, "Costs posted in Ledger to the billable-items accounts and tagged with this customer, not invoiced yet."),
+		scroll(
+			h(
+				"table",
+				{},
+				h("thead", {}, h("tr", {}, h("th", {}, all), h("th", {}, "Date"), h("th", {}, "Item"), h("th", { class: "right" }, "Amount"))),
+				h(
+					"tbody",
+					{},
+					items.map((it, i) =>
+						h(
+							"tr",
+							{},
+							h("td", {}, boxes[i]),
+							h("td", {}, it.date),
+							h("td", {}, it.description || "(no description)", h("div", { class: "muted" }, `${it.account_code} ${it.account_name}${it.reference ? ` · ref ${it.reference}` : ""}`)),
+							h("td", { class: "num" }, money(it.amount_cents, currency)),
+						),
+					),
+				),
+			),
+		),
+		h("p", {}, total),
+		h("div", { class: "actions" }, ...buttons, h("button", { type: "button", onclick: closeDialog }, "Cancel")),
+	);
+	update();
 }
 
 // ---- document view -----------------------------------------------------------------

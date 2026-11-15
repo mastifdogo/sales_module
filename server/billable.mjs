@@ -1,0 +1,106 @@
+// Billable items: amounts posted to the accounts listed in Settings → Sales
+// ("Billable items" accounts) on entries tagged with a customer (the entry's
+// entity, Ledger ≥ 0.16.0), not yet on an invoice. A new invoice can take
+// any of them, each as its own line or several combined into one line; the
+// line keeps which journal lines it bills (document_lines.billed_ledger_line_ids),
+// so an item can't be billed twice. Deleting a draft or voiding an invoice
+// frees its items again.
+
+export const BILLABLE_KEYS = ["billable_account_1", "billable_account_2", "billable_account_3", "billable_account_4", "billable_account_5"];
+const PAGE = 500;
+const MAX_PAGES = 20; // up to 10,000 entries per account
+
+export function billableItems(ctx, h) {
+	const { T, q, CUSTOMERS, loadSettings } = h;
+
+	/** The billable accounts set in Settings (codes, renumbered by Ledger with the account). */
+	async function accounts() {
+		const s = await loadSettings();
+		const raw = ctx.settings ? await ctx.settings.get().catch(() => ({})) : {};
+		const codes = BILLABLE_KEYS.map((k) => String(raw[k] ?? s[k] ?? "").trim()).filter(Boolean);
+		return [...new Set(codes)];
+	}
+
+	/** Journal line ids already on an invoice that isn't void (other than `exceptDoc`). */
+	async function billedLineIds(exceptDoc = null) {
+		const { rows } = await q(
+			`SELECT DISTINCT unnest(l.billed_ledger_line_ids)::text AS id
+			   FROM ${T("document_lines")} l JOIN ${T("documents")} d ON d.id = l.document_id
+			  WHERE d.kind = 'invoice' AND d.status <> 'void' AND ($1::bigint IS NULL OR d.id <> $1::bigint)`,
+			[exceptDoc === null || exceptDoc === undefined ? null : String(exceptDoc)],
+		);
+		return new Set(rows.map((r) => r.id));
+	}
+
+	/**
+	 * A customer's unbilled items in one currency, oldest first:
+	 * [{ line_id, entry_id, date, description, reference, account_code, account_name, amount_cents }],
+	 * plus what's set up and any account that couldn't be read.
+	 */
+	async function forCustomer(customerId, currency, { exceptDoc = null } = {}) {
+		const codes = await accounts();
+		const out = { accounts: codes, items: [], problems: [] };
+		if (codes.length === 0) return out;
+		const { rows } = await q(`SELECT id, entity_id, currency FROM ${CUSTOMERS} c WHERE id = $1`, [String(customerId)]);
+		const cust = rows[0];
+		if (!cust) throw new ctx.HttpError(404, "no such customer");
+		if (cust.entity_id === null) {
+			out.problems.push("This customer isn't in Ledger's customer list yet (Customers → Review the move), so no entries can be tagged with them.");
+			return out;
+		}
+		const entity = String(cust.entity_id);
+		const billed = await billedLineIds(exceptDoc);
+		for (const code of codes) {
+			let acct;
+			try {
+				acct = await ctx.ledger.getAccount(code);
+			} catch {
+				out.problems.push(`Billable items account ${code} doesn't exist in Ledger (Settings → Sales).`);
+				continue;
+			}
+			if (acct.currency !== currency) continue;
+			for (let page = 0; page < MAX_PAGES; page++) {
+				const entries = await ctx.ledger.listJournalEntries({ accountCode: code, limit: PAGE, offset: page * PAGE });
+				for (const e of entries) {
+					// Reversed entries and the reversals themselves aren't billable.
+					if (String(e.entity?.id ?? e.entity_id ?? "") !== entity || e.reverses_id != null || e.reversed_by_id != null) continue;
+					for (const l of e.lines) {
+						if (l.account_code !== code) continue;
+						const cents = BigInt(l.debit_cents ?? 0) - BigInt(l.credit_cents ?? 0);
+						if (cents <= 0n || billed.has(String(l.id))) continue;
+						out.items.push({
+							line_id: String(l.id),
+							entry_id: String(e.id),
+							date: e.entry_date,
+							description: (l.memo || e.description || "").trim(),
+							reference: e.reference ?? "",
+							account_code: code,
+							account_name: acct.name,
+							amount_cents: cents.toString(),
+						});
+					}
+				}
+				if (entries.length < PAGE) break;
+			}
+		}
+		out.items.sort((a, b) => (a.date === b.date ? Number(a.line_id) - Number(b.line_id) : a.date < b.date ? -1 : 1));
+		return out;
+	}
+
+	/**
+	 * Checks the journal lines an invoice's lines want to bill: each must be
+	 * a current billable item of this customer in this currency, used once.
+	 * Throws 409 otherwise.
+	 */
+	async function check(customerId, currency, lineIdsPerLine, exceptDoc) {
+		const wanted = lineIdsPerLine.flat();
+		if (wanted.length === 0) return;
+		if (new Set(wanted).size !== wanted.length) throw new ctx.HttpError(422, "the same billable item is on two lines");
+		const { items } = await forCustomer(customerId, currency, { exceptDoc });
+		const open = new Set(items.map((i) => i.line_id));
+		const gone = wanted.filter((id) => !open.has(id));
+		if (gone.length) throw new ctx.HttpError(409, `${gone.length} billable item${gone.length === 1 ? " is" : "s are"} no longer available for this customer (already invoiced, reversed, or not tagged with them); reload and choose again`);
+	}
+
+	return { accounts, forCustomer, check };
+}

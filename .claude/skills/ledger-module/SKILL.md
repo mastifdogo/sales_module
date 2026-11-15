@@ -104,6 +104,15 @@ payments to the books.
   `accounts: { CAD, USD }`, built in SQL (`h.TAX_ACCOUNTS`,
   `h.CATEGORY_ACCOUNTS`) and written with `h.accountColumns()`. Never put a
   code in JSON or cache one.
+- Billable items (0.10.0): settings `billable_account_1`…`_5` (one code
+  each, so Ledger renumbers them). `server/billable.mjs` pages through
+  `ctx.ledger.listJournalEntries({ accountCode })` for each, keeps lines on
+  that account with a positive debit whose entry's entity is the customer's
+  (skipping reversed entries and reversals), and drops lines already billed:
+  `document_lines.billed_ledger_line_ids` on invoices that aren't void.
+  `GET /customers/:id/billable?currency=&invoice=` lists them; saving an
+  invoice re-checks every billed id (`billable.check`, 409 if taken).
+  Duplicating or converting never copies billed ids.
 - A person can change the amounts of an entry Sales posted (Ledger 0.19.5,
   `amended: true`). `entryChanges()` in `documents.mjs` compares each
   posted entry (invoice, payments) with what Sales posted and returns
