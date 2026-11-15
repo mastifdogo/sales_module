@@ -12,6 +12,7 @@
 import { addDays, computeTotals, formatDecimal, formatMoney, MAX_CENTS, today } from "../lib/money.mjs";
 import { renderDocumentPdf } from "../lib/pdf.mjs";
 import { KINDS } from "./common.mjs";
+import { billableItems } from "./billable.mjs";
 import { openLink } from "./search.mjs";
 
 const MAX_LINES = 200;
@@ -31,6 +32,7 @@ const COLUMN_TYPES = {
 const OPEN_QUOTE = ["draft", "sent"];
 
 export function documentRoutes(ctx, h, mail) {
+	const billable = billableItems(ctx, h);
 	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings, CUSTOMERS, TAX_ACCOUNTS, CATEGORY_ACCOUNTS } = h;
 
 	const byId = (rows) => new Map(rows.map((r) => [String(r.id), r]));
@@ -80,9 +82,17 @@ export function documentRoutes(ctx, h, mail) {
 					if (!t) throw bad(`${f("tax_ids")}: there is no such tax`);
 					return { id: Number(t.id), name: t.name, rate: Number(t.rate) };
 				});
-				return { category_id: category ? String(category.id) : null, description, quantity, unit_price_cents: unit, taxes: lineTaxes };
+				let billed = [];
+				if (l.billed_ledger_line_ids !== undefined && l.billed_ledger_line_ids !== null) {
+					if (kind !== "invoice") throw bad(`${f("billed_ledger_line_ids")}: only invoices bill items`);
+					if (!Array.isArray(l.billed_ledger_line_ids) || l.billed_ledger_line_ids.length > 500) throw bad(`${f("billed_ledger_line_ids")} must be a list of billable items`);
+					billed = idList(l.billed_ledger_line_ids, f("billed_ledger_line_ids")).map(String);
+				}
+				return { category_id: category ? String(category.id) : null, description, quantity, unit_price_cents: unit, taxes: lineTaxes, billed_ledger_line_ids: billed };
 			});
 		}
+		// Billable items must still be this customer's, in this currency, and not billed elsewhere.
+		await billable.check(String(cust.id), cur, lines.map((l) => (l.billed_ledger_line_ids ?? []).map(String)), existing?.id ?? null);
 		const totals = computeTotals(lines);
 		if (totals.total > MAX_CENTS || totals.total < -MAX_CENTS) throw bad("the total is too large");
 		return {
@@ -106,16 +116,17 @@ export function documentRoutes(ctx, h, mail) {
 					unit_price_cents: l.unit_price_cents.toString(),
 					taxes: l.taxes,
 					amount_cents: totals.amounts[i].toString(),
+					billed_ledger_line_ids: (l.billed_ledger_line_ids ?? []).map(String),
 				})),
 			),
 		};
 	}
 
 	const LINES_FROM_JSON = (src, param) => `
-		INSERT INTO ${T("document_lines")} (document_id, position, category_id, description, quantity, unit_price_cents, taxes, amount_cents)
-		SELECT ${src}.id, x.position, x.category_id, x.description, x.quantity, x.unit_price_cents, x.taxes, x.amount_cents
+		INSERT INTO ${T("document_lines")} (document_id, position, category_id, description, quantity, unit_price_cents, taxes, amount_cents, billed_ledger_line_ids)
+		SELECT ${src}.id, x.position, x.category_id, x.description, x.quantity, x.unit_price_cents, x.taxes, x.amount_cents, coalesce(x.billed_ledger_line_ids, '{}')
 		  FROM ${src}, jsonb_to_recordset(${param}::jsonb)
-		       AS x(position int, category_id bigint, description text, quantity bigint, unit_price_cents bigint, taxes jsonb, amount_cents bigint)`;
+		       AS x(position int, category_id bigint, description text, quantity bigint, unit_price_cents bigint, taxes jsonb, amount_cents bigint, billed_ledger_line_ids bigint[])`;
 
 	/** Inserts a draft with the kind's next number, skipping numbers already taken. */
 	async function insertDocument(kind, cols, linesJson, user) {
@@ -165,7 +176,8 @@ export function documentRoutes(ctx, h, mail) {
 		if (!doc || (kind && doc.kind !== kind)) throw notFound(kind ?? "document");
 		const [lines, payments, emails] = await Promise.all([
 			q(
-				`SELECT l.id, l.position, l.category_id, cat.name AS category_name, l.description, l.quantity, l.unit_price_cents, l.taxes, l.amount_cents
+				`SELECT l.id, l.position, l.category_id, cat.name AS category_name, l.description, l.quantity, l.unit_price_cents, l.taxes, l.amount_cents,
+				        l.billed_ledger_line_ids::text[] AS billed_ledger_line_ids
 				   FROM ${T("document_lines")} l LEFT JOIN ${T("categories")} cat ON cat.id = l.category_id
 				  WHERE l.document_id = $1 ORDER BY l.position, l.id`,
 				[did],
@@ -677,6 +689,17 @@ ${paras}
 		if (isInvoice) invoiceRoutes(base, docId);
 		else quoteRoutes(kind, base, docId);
 	}
+
+	// ---- billable items ----------------------------------------------------------------------
+
+	// A customer's unbilled items: ?currency=CAD, and &invoice=<id> when editing that draft.
+	ctx.route("GET", "/customers/:id/billable", async (req) => {
+		const cid = id(req, "id", "customer");
+		const cur = currency(req.query.get("currency") || "CAD");
+		const inv = req.query.get("invoice");
+		if (inv && !isId(inv)) throw bad("invoice must be an invoice id");
+		return billable.forCustomer(cid, cur, { exceptDoc: inv || null });
+	});
 
 	// ---- invoice-only routes ------------------------------------------------------------------
 
