@@ -31,11 +31,11 @@ const COLUMN_TYPES = {
 const OPEN_QUOTE = ["draft", "sent"];
 
 export function documentRoutes(ctx, h, mail) {
-	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings, CUSTOMERS } = h;
+	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings, CUSTOMERS, TAX_ACCOUNTS, CATEGORY_ACCOUNTS } = h;
 
 	const byId = (rows) => new Map(rows.map((r) => [String(r.id), r]));
-	const loadTaxes = async () => byId((await q(`SELECT * FROM ${T("taxes")}`)).rows);
-	const loadCategories = async () => byId((await q(`SELECT * FROM ${T("categories")}`)).rows);
+	const loadTaxes = async () => byId((await q(`SELECT *, ${TAX_ACCOUNTS} FROM ${T("taxes")}`)).rows);
+	const loadCategories = async () => byId((await q(`SELECT *, ${CATEGORY_ACCOUNTS} FROM ${T("categories")}`)).rows);
 	const validDays = (kind, s, cust) => (kind === "invoice" ? (cust.terms_days ?? s.default_terms_days) : s[KINDS[kind].validDays]);
 
 	// ---- input --------------------------------------------------------------------
@@ -181,6 +181,7 @@ export function documentRoutes(ctx, h, mail) {
 		const t = today();
 		doc.overdue = doc.kind === "invoice" && doc.status === "open" && doc.due_date < t;
 		doc.expired = doc.kind !== "invoice" && OPEN_QUOTE.includes(doc.status) && doc.due_date < t;
+		doc.entry_changes = await entryChanges(doc);
 		// Its PDF in Ledger's Documents, if it's (still) there: a restore or a
 		// person may have removed it.
 		doc.pdf_url = null;
@@ -256,6 +257,25 @@ export function documentRoutes(ctx, h, mail) {
 		label: `${what} ${doc.number} · ${doc.customer?.name ?? ""}`.slice(0, 200),
 		href: openLink(`invoices/${doc.id}`),
 	});
+
+	/**
+	 * Entries Sales posted for this document that a person has since changed
+	 * in Ledger (Ledger ≥ 0.19.5 marks them amended): what the entry now
+	 * totals next to what Sales posted. Sales' own record stays as it is.
+	 */
+	async function entryChanges(doc) {
+		const posted = [];
+		if (doc.journal_entry_id !== null) posted.push({ what: `Invoice ${doc.number}`, id: doc.journal_entry_id, cents: BigInt(doc.total_cents) });
+		for (const p of doc.payments ?? []) if (p.journal_entry_id !== null) posted.push({ what: `Payment of ${p.payment_date}`, id: p.journal_entry_id, cents: BigInt(p.amount_cents) });
+		const out = [];
+		for (const x of posted) {
+			const e = await ctx.ledger.getJournalEntry(x.id).catch(() => null);
+			if (!e?.amended) continue;
+			const now = BigInt(e.totals?.find((t) => t.currency === doc.currency)?.amount_cents ?? 0);
+			out.push({ what: x.what, entry_id: String(x.id), posted_cents: x.cents.toString(), now_cents: now.toString(), differs: now !== x.cents });
+		}
+		return out;
+	}
 
 	/** Who an entry is with, for Ledger (≥ 0.16.0): the customer's entity, when it has an active one. */
 	const entityOf = (doc) => (doc.customer?.entity_id != null && doc.customer.entity_active ? { entity_id: Number(doc.customer.entity_id) } : {});

@@ -205,5 +205,15 @@ export function helpers(ctx) {
 	        c.created_at, c.updated_at
 	   FROM ${T("customers")} c LEFT JOIN public.entities e ON e.id = c.entity_id)`;
 
-	return { T, q, bad, notFound, conflict, body, text, intIn, bool, dateField, currency, decimal, rate, id, isId, idList, like, loadSettings, requireAdmin, checkAccount, accountMap, checkTaxIds, CUSTOMERS };
+	// Taxes and categories keep one account column per currency (renumbered by
+	// Ledger along with the account); the API shows them as accounts: { CAD, USD }.
+	const TAX_ACCOUNTS = `jsonb_strip_nulls(jsonb_build_object('CAD', cad_payable_account, 'USD', usd_payable_account)) AS accounts`;
+	const CATEGORY_ACCOUNTS = `jsonb_strip_nulls(jsonb_build_object('CAD', cad_revenue_account, 'USD', usd_revenue_account)) AS accounts`;
+	/** { CAD, USD } from the API → the columns, prefix "payable" or "revenue". */
+	async function accountColumns(v, field, role) {
+		const m = await accountMap(v, field);
+		return { [`cad_${role}_account`]: m.CAD ?? null, [`usd_${role}_account`]: m.USD ?? null };
+	}
+
+	return { T, q, bad, notFound, conflict, body, text, intIn, bool, dateField, currency, decimal, rate, id, isId, idList, like, loadSettings, requireAdmin, checkAccount, accountMap, accountColumns, checkTaxIds, CUSTOMERS, TAX_ACCOUNTS, CATEGORY_ACCOUNTS };
 }
