@@ -144,7 +144,7 @@ payments to the books.
   `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
   `test/*.test.mjs` (`npm test`).
-- Needs Ledger ≥ 0.20.0. Account codes live only where Ledger renumbers
+- Needs Ledger ≥ 0.21.1. Account codes live only where Ledger renumbers
   them: settings keys with "account" (`receivable_account_cad`, …) and text
   columns ending `_account` (`taxes.cad_payable_account`,
   `categories.cad_revenue_account`, and the USD ones). The API still shows
@@ -169,6 +169,21 @@ payments to the books.
   reverses it. `GET /customers/:id/billable?currency=&invoice=` lists them;
   saving an invoice re-checks every billed id (409 if taken). Duplicating
   or converting never copies billed ids.
+- Root mode (Ledger 0.21.1): `server/root.mjs`. With `req.user.root`,
+  `DELETE /root/documents/:id`, `PATCH /root/documents/:id` (listed columns
+  only), `DELETE /root/payments/:id` (and the invoice's paid_cents/status
+  brought in line) and `DELETE /root/customers/:id` go through
+  `ctx.root.remove` / `ctx.root.update` only, rows that hang off first
+  (lines, payments, email log; other documents' source_id/converted_id set
+  to null), never posting or reversing entries. `ctx.root.onCheck` reports
+  issued documents with no lines, paid_cents that don't match payments, and
+  invoice statuses that don't match what's paid (Ledger prefixes "Sales:").
+  `GET /settings` returns `root`; the page shows red **Root** controls only
+  then.
+- Account pickers (`GET /accounts`) leave out hidden accounts and Ledger's
+  own (`module_id` "ledger", its Unreconciled account); applying a deposit
+  refuses to post to one of Ledger's accounts, and billable costs never
+  look in them.
 - A person can change the amounts of an entry Sales posted (Ledger 0.19.5,
   `amended: true`). `entryChanges()` in `documents.mjs` compares each
   posted entry (invoice, payments) with what Sales posted and returns

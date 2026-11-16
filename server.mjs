@@ -13,6 +13,7 @@ import { documentRoutes } from "./server/documents.mjs";
 import { mailHelpers } from "./server/email.mjs";
 import { moveSettings } from "./server/move-settings.mjs";
 import { paymentRoutes } from "./server/payments.mjs";
+import { rootRoutes } from "./server/root.mjs";
 import { searchProvider } from "./server/search.mjs";
 import { settingsRoutes } from "./server/settings.mjs";
 
@@ -35,6 +36,7 @@ export default async function register(ctx) {
 	const customers = customerRoutes(routes, h);
 	const docs = documentRoutes(routes, h, mail);
 	paymentRoutes(routes, h, docs);
+	rootRoutes(routes, h);
 	importRoutes(routes, h, dashboard, customers);
 	csvImport(ctx, h, customers);
 	searchProvider(ctx, h);

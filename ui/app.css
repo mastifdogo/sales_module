@@ -36,6 +36,9 @@ button, .button {
 button:hover, .button:hover { border-color: var(--muted); text-decoration: none; }
 button.primary, .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 button.danger { color: var(--danger); }
+/* Root mode (Ledger ≥ 0.21.1): controls that bypass Sales' usual rules. */
+.rootmark { color: #fff; background: var(--danger); border-radius: 4px; padding: 0.1rem 0.45rem; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; align-self: center; }
+button.root { color: var(--danger); border-color: var(--danger); }
 button.link { border: 0; background: none; color: var(--muted); padding: 0.1rem 0.3rem; }
 button:disabled { opacity: 0.55; cursor: default; }
 .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin: 0.75rem 0; }

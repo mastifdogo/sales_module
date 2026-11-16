@@ -638,6 +638,29 @@ async function billableDialog({ customerId, currency, invoiceId, skip }, done) {
 	update();
 }
 
+/** Root mode: set a document's status to anything, without Sales' usual rules. */
+function rootStatusDialog(doc, statuses, path, done) {
+	const sel = select("status", doc.status, statuses.map((s) => [s, s]));
+	const form = h(
+		"form",
+		{ method: "dialog" },
+		h("h2", {}, h("span", { class: "rootmark" }, "Root"), ` Status of ${doc.number}`),
+		h("p", { class: "hint" }, "Changes only the status Sales shows; nothing is posted or reversed in the books. Ledger's root log can undo it."),
+		field("Status", sel),
+		h("div", { class: "actions" }, h("button", { class: "primary root", type: "submit" }, "Change"), h("button", { type: "button", onclick: closeDialog }, "Cancel")),
+	);
+	form.onsubmit = (e) => {
+		e.preventDefault();
+		busy(e.submitter, async () => {
+			await api(`/root/documents/${doc.id}`, { method: "PATCH", body: { status: sel.value } });
+			closeDialog();
+			flash(`${doc.number} is now ${sel.value} (root).`);
+			done();
+		});
+	};
+	openDialog(form);
+}
+
 // ---- document view -----------------------------------------------------------------
 
 async function docView(kind, id) {
@@ -710,6 +733,20 @@ async function docView(kind, id) {
 			flash(`${K.label} ${doc.number} deleted.`);
 			go(`#/${K.plural}`);
 		}, { class: "danger" }));
+	}
+
+	if (settings.root) {
+		const statuses = isInvoice ? ["draft", "open", "paid", "void"] : ["draft", "sent", "accepted", "declined", "converted"];
+		actions.push(
+			h("span", { class: "rootmark", title: "Root mode is on: these skip Sales' usual rules" }, "Root"),
+			act("Change status", () => rootStatusDialog(doc, statuses, path, reload), { class: "root" }),
+			act("Delete", async () => {
+				if (!confirm(`Root: delete ${K.label.toLowerCase()} ${doc.number} with its lines, payments and email log? No journal entries are reversed. It can be put back from Ledger's root log.`)) return;
+				await api(`/root/documents/${doc.id}`, { method: "DELETE" });
+				flash(`${K.label} ${doc.number} deleted (root).`);
+				go(`#/${K.plural}`);
+			}, { class: "root" }),
+		);
 	}
 
 	const c = doc.customer;
@@ -796,6 +833,14 @@ async function docView(kind, id) {
 												flash("Payment removed.");
 												reload();
 											}, { class: "link" })
+										: null,
+									settings.root
+										? act("Delete (root)", async () => {
+												if (!confirm(`Root: delete this payment of ${money(p.amount_cents, doc.currency)} without reversing anything in the books?`)) return;
+												await api(`/root/payments/${p.id}`, { method: "DELETE" });
+												flash("Payment deleted (root).");
+												reload();
+											}, { class: "link root" })
 										: null,
 								),
 							),
@@ -1159,7 +1204,7 @@ async function customerForm(idOrNull) {
 }
 
 async function customerView(id) {
-	const [c, taxes] = await Promise.all([api(`/customers/${id}`), api("/taxes")]);
+	const [c, taxes, settings] = await Promise.all([api(`/customers/${id}`), api("/taxes"), api("/settings")]);
 	const reload = () => customerView(id).catch(fail);
 	const taxNames = c.tax_ids === null ? "default" : c.tax_ids.map((t) => taxes.data.find((x) => String(x.id) === String(t))?.name ?? "?").join(" + ") || "none (exempt)";
 	const info = [
@@ -1198,6 +1243,19 @@ async function customerView(id) {
 			openInvoices.length ? h("button", { onclick: () => receivePaymentDialog(c, openInvoices, reload) }, "Receive payment") : null,
 			openInvoices.length ? h("button", { onclick: () => matchDepositsDialog({ customer: c }, reload) }, "Find matching deposits") : null,
 			h("a", { class: "button", href: `#/customers/${c.id}/edit` }, "Edit"),
+			settings.root ? h("span", { class: "rootmark", title: "Root mode is on" }, "Root") : null,
+			settings.root
+				? h("button", {
+						class: "root",
+						onclick: (e) =>
+							busy(e.currentTarget, async () => {
+								if (!confirm(`Root: delete ${c.name} from Sales with all ${c.documents.length} of their invoices, quotes and estimates? Their entry in Ledger's customer list stays. It can be put back from Ledger's root log.`)) return;
+								await api(`/root/customers/${c.id}`, { method: "DELETE" });
+								flash(`${c.name} deleted from Sales (root).`);
+								go("#/customers");
+							}),
+					}, "Delete")
+				: null,
 		),
 		h(
 			"div",

@@ -11,7 +11,7 @@ export function settingsRoutes(ctx, h, mail) {
 	async function publicSettings(req) {
 		const { smtp_password, ...s } = await loadSettings();
 		const [email, ai] = await Promise.all([mail.status(s), aiStatus()]);
-		return { ...s, smtp_password_set: smtp_password !== "", email, email_ready: email.ready, ai, is_admin: req.user.role === "admin", role: req.user.role };
+		return { ...s, smtp_password_set: smtp_password !== "", email, email_ready: email.ready, ai, is_admin: req.user.role === "admin", role: req.user.role, root: req.user.root === true };
 	}
 
 	/** Whether deposit matching can ask Ledger's AI, and if not, what to do about it. */
@@ -64,7 +64,9 @@ export function settingsRoutes(ctx, h, mail) {
 	});
 
 	ctx.route("GET", "/accounts", async () => {
-		const accounts = await ctx.ledger.listAccounts();
+		// Hidden accounts (clearing accounts, unless a person shows them; Ledger
+		// ≥ 0.20.1) and Ledger's own (its Unreconciled account) stay out of pickers.
+		const accounts = (await ctx.ledger.listAccounts()).filter((a) => !a.hidden && a.module_id !== "ledger");
 		return { data: accounts.map((a) => ({ code: a.code, name: a.name, type: a.type, currency: a.currency, parent_code: a.parent_code ?? null, kind: a.kind ?? null })) };
 	});
 

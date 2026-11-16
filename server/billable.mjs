@@ -79,7 +79,7 @@ export function billableItems(ctx, h) {
 				out.problems.push(`Billable items account ${code} doesn't exist in Ledger (Settings → Sales).`);
 				continue;
 			}
-			if (acct.currency !== currency) continue;
+			if (acct.currency !== currency || acct.module_id === "ledger") continue; // never Ledger's own (Unreconciled)
 			for (let page = 0; page < MAX_PAGES; page++) {
 				const entries = await ctx.ledger.listJournalEntries({ accountCode: code, limit: PAGE, offset: page * PAGE });
 				for (const e of entries) {

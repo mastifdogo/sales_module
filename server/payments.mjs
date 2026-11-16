@@ -417,6 +417,15 @@ export function paymentRoutes(ctx, h, docs) {
 		const sum = allocs.reduce((t, a) => t + a.cents, 0n);
 		if (sum > remaining) throw bad(`that's more than the ${formatMoney(remaining, line.currency)} of this deposit not yet applied`);
 
+		// Never post to Ledger's own accounts (its Unreconciled clearing account, Ledger ≥ 0.20.2).
+		for (const a of allocs) {
+			const p = postingFor(entry, line.id, a.invoice, s);
+			if (p === "none") continue;
+			const from = await ctx.ledger.getAccount(p.from).catch(() => null);
+			if (!from) throw conflict(`The account that deposit was credited to (${p.from}) no longer exists; record the payment on the invoice by hand.`);
+			if (from.module_id === "ledger") throw conflict(`That deposit sits in Ledger's ${from.name} account. Move it on in Ledger (Reconcile) first, then apply it here.`);
+		}
+
 		const details = {
 			date: entry.entry_date,
 			method: method || "Bank deposit",

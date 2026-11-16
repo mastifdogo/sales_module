@@ -91,7 +91,7 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.20.0 or newer** (clearing accounts, renumbered accounts, Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
+Needs **Ledger 0.21.1 or newer** (root mode, clearing accounts, renumbered accounts, Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
 "+ New account…", journal entry links, settings per organization, plus the
 settings form, Gmail, search and user roles from earlier versions). In
 Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
@@ -117,6 +117,15 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.15.0**: root mode (Ledger 0.21.1). While an admin has root mode on,
+  invoices, quotes, estimates, payments and customers show red **Root**
+  controls to delete them, or change a document's status, whatever its
+  state. Ledger logs each change and can put it back; nothing is posted
+  or reversed in the books. Ledger won't leave root mode while Sales has
+  broken records (an issued document with no lines, an invoice whose
+  payments don't add up). Account pickers leave out hidden clearing
+  accounts and Ledger's own; Sales never posts to Ledger's Unreconciled
+  account. Needs Ledger 0.21.1.
 - **0.14.1**: fixes. **+ Billable items** now shows on every invoice (it
   was hidden unless an extra billable account was set, so costs in Sales'
   own clearing account couldn't be billed). Looking for matching deposits
