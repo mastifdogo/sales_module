@@ -7,7 +7,7 @@
 //   overdue   while it is open, unpaid and past its due date.
 //
 // and tags the entries of the billable costs an invoice bills "billed" while
-// that invoice stands. documents.entry_tags holds what Sales knows to be on
+// that invoice stands, and "paid" while it is paid. documents.entry_tags holds what Sales knows to be on
 // each entry, so a sync only calls Ledger where something should change; the
 // same sync brings invoices from before 0.16.0 in line the first time it runs.
 //
@@ -136,6 +136,44 @@ export function entryTags(ctx, h) {
 				await q(`UPDATE ${T("documents")} SET billed_entry_ids = '{}' WHERE id = $1`, [String(r.id)]);
 			} catch (e) {
 				warnOnce(`unbill:${r.id}`, "could not take the billed tag off the billable items of a void invoice", { invoice: r.number, err: e.message });
+			}
+		}
+		await syncBillablePaid(did, user);
+	}
+
+	/**
+	 * Tags the entries of billable items "paid" while the invoice that bills
+	 * them is paid (payments in Sales, or its entry tagged paid in Ledger), and
+	 * takes it off again when the invoice is unpaid or void.
+	 */
+	async function syncBillablePaid(did, user) {
+		const { rows } = await q(
+			`SELECT * FROM (
+				SELECT d.id, d.number, d.paid_entry_ids::text[] AS have,
+				       CASE WHEN d.status = 'paid' OR (d.status = 'open' AND d.paid_by_tag) THEN coalesce(d.billed_entry_ids, '{}') ELSE '{}' END::text[] AS want
+				  FROM ${T("documents")} d
+				 WHERE d.kind = 'invoice' AND ($1::bigint IS NULL OR d.id = $1::bigint)
+				   AND (cardinality(d.paid_entry_ids) > 0 OR cardinality(d.billed_entry_ids) > 0)
+			) x
+			WHERE NOT (x.want @> x.have AND x.have @> x.want)
+			ORDER BY x.id LIMIT ${MAX_PER_SYNC}`,
+			[did],
+		);
+		for (const r of rows) {
+			try {
+				for (const entry of r.have) {
+					if (r.want.includes(entry)) continue;
+					// Another paid invoice may bill the same entry; and only a tag Sales set is Sales' to take off.
+					const held = await q(
+						`SELECT 1 FROM ${T("documents")} WHERE id <> $2 AND kind = 'invoice' AND $1::bigint = ANY(paid_entry_ids) LIMIT 1`,
+						[entry, String(r.id)],
+					);
+					if (held.rows.length === 0 && (await tags.of(entry)).some((t) => t.tag === "paid" && t.module_id === ctx.id)) await tags.remove(entry, "paid");
+				}
+				for (const entry of r.want) if (!r.have.includes(entry)) await tags.set(entry, "paid", { note: `Invoice ${r.number}`.slice(0, 200) }, user);
+				await q(`UPDATE ${T("documents")} SET paid_entry_ids = $2::bigint[] WHERE id = $1`, [String(r.id), r.want]);
+			} catch (e) {
+				warnOnce(`billpaid:${r.id}`, "could not tag the billable items of an invoice as paid", { invoice: r.number, err: e.message });
 			}
 		}
 	}

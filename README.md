@@ -75,6 +75,8 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
 - **create accounts on the spot**: the account dropdowns for categories and
   taxes end with **+ New account…**, which opens Ledger's New account
   dialog and selects the new account, without losing what you'd filled in.
+- **projects**: group a customer's invoices, quotes, estimates and
+  billable costs by project, with what's quoted, invoiced, paid and owed.
 - **find things from Ledger's search bar**: customers, and invoices, quotes
   and estimates by number, customer or PO number.
 - optionally **post to the books**: issuing an invoice posts Dr receivable,
@@ -117,6 +119,20 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.17.0**: projects and paid billable costs.
+  - A **Projects** tab: a project belongs to one customer and gathers its
+    invoices, quotes and estimates, with what's quoted, invoiced, paid and
+    outstanding. A project's page lets you assign the customer's unbilled
+    costs to it, and starts invoices, quotes and estimates for it; invoices,
+    quotes and estimates have a Project picker, and a customer's page lists
+    their projects. Close a project when it's done; root mode can delete one.
+  - Billable costs, from the clearing account or the accounts you added,
+    are tagged **billed** in Ledger when invoiced (as before) and now also
+    **paid** when that invoice is paid, in Sales or by a "paid" tag on the
+    invoice's entry. Unpaying takes Sales' own "paid" tag off again, leaving
+    one a person or another module set.
+  - Fix: deleting a draft invoice made from a quote or estimate works again,
+    and that quote is accepted again, free to convert anew.
 - **0.16.1:** Voiding an invoice only takes the "billed" tag off a billable cost's entry if Sales
   set it. A tag set by the module that posted the cost (Employees, for hours) stays, so voiding an
   invoice no longer undoes that module's own billing.

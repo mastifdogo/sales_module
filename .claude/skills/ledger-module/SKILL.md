@@ -187,6 +187,20 @@ payments to the books.
   payment matching), removed clears it. Every query that means "owed"
   says `status = 'open' AND NOT paid_by_tag`. Never post in reaction to a
   tag. Root deletes don't touch tags.
+- Projects (0.17.0): `server/projects.mjs`, Sales' own grouping (nothing in
+  the chart of accounts). `projects` (one customer each, active/closed,
+  name unique per customer), `documents.project_id` (same customer; a new
+  document only on an active project; convert keeps it, duplicate keeps an
+  active one) and `project_costs` (a billable cost's Ledger journal line
+  assigned to a project; `billable.forCustomer` returns `project_id` and
+  `project_name` on each item). Totals per currency are worked out in SQL
+  (quoted: quotes/estimates not declined; paid counts an invoice tagged paid
+  in full). A project with documents can only be closed, except in root
+  mode (`DELETE /root/projects/:id`).
+- Billable costs carry Ledger tags: "billed" while an issued invoice bills
+  them, and "paid" while that invoice is paid (`documents.paid_entry_ids`,
+  `syncBillablePaid()` in `tags.mjs`). Sales only takes off a tag it set
+  itself, and not while another invoice still holds the entry.
 - Root mode (Ledger 0.21.1): `server/root.mjs`. With `req.user.root`,
   `DELETE /root/documents/:id`, `PATCH /root/documents/:id` (listed columns
   only), `DELETE /root/payments/:id` (and the invoice's paid_cents/status

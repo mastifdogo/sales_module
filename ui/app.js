@@ -235,6 +235,8 @@ const routes = [
 	[/^\/customers\/import\/(\d+)$/, (m) => importView(m[1])],
 	[/^\/customers\/(\d+)$/, (m) => customerView(m[1])],
 	[/^\/customers\/(\d+)\/edit$/, (m) => customerForm(m[1])],
+	[/^\/projects$/, (m, qs) => projectList(qs)],
+	[/^\/projects\/(\d+)$/, (m) => projectView(m[1])],
 	[/^\/categories$/, () => categoryList()],
 	[/^\/payments$/, () => paymentsView()],
 ];
@@ -385,7 +387,18 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 	if (existing && !customers.data.some((c) => String(c.id) === String(existing.customer_id))) customers.data.push(await api(`/customers/${existing.customer_id}`));
 	const custById = new Map(customers.data.map((c) => [String(c.id), c]));
 	const catById = new Map(cats.data.map((c) => [String(c.id), c]));
-	const doc = existing ?? { customer_id: qs.get("customer") ?? "", issue_date: todayStr(), due_date: "", currency: "", po_number: "", notes: "", lines: [] };
+	const doc = existing ?? { customer_id: qs.get("customer") ?? "", project_id: qs.get("project") ?? null, issue_date: todayStr(), due_date: "", currency: "", po_number: "", notes: "", lines: [] };
+	// The customer's projects: active ones, plus the one this document is already on.
+	const projectSel = select("project_id", "", [["", "— none —"]]);
+	const projectField = field("Project", projectSel);
+	const loadProjects = async (keep) => {
+		const cid = customerSel.value;
+		const list = cid ? (await api(`/projects?${new URLSearchParams({ customer_id: cid })}`)).data : [];
+		const shown = list.filter((p) => p.status === "active" || String(p.id) === String(keep ?? ""));
+		projectSel.replaceChildren(...[["", "— none —"], ...shown.map((p) => [String(p.id), p.status === "closed" ? `${p.name} (closed)` : p.name])].map(([v, l]) => h("option", { value: v }, l)));
+		projectSel.value = shown.some((p) => String(p.id) === String(keep ?? "")) ? String(keep) : "";
+		projectField.hidden = shown.length === 0;
+	};
 
 	const form = h("form", { autocomplete: "off" });
 	const customerSel = select("customer_id", doc.customer_id, [["", "Choose a customer…"], ...customers.data.map((c) => [c.id, c.company ? `${c.name} (${c.company})` : c.name])], { required: true });
@@ -408,6 +421,7 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 		return cat?.tax_ids ?? c?.tax_ids ?? settings.default_tax_ids;
 	};
 	customerSel.onchange = () => {
+		loadProjects(null).catch(fail);
 		const c = custById.get(customerSel.value);
 		if (c && !existing) cur.value = c.currency;
 		syncDue();
@@ -481,11 +495,12 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 	}
 	(doc.lines.length ? doc.lines : [{}]).forEach(addLine);
 	recalc();
+	await loadProjects(doc.project_id ?? null);
 
 	const save = async (btn, then) =>
 		busy(btn, async () => {
 			if (!form.reportValidity()) return;
-			const body = { customer_id: customerSel.value, issue_date: issue.value, due_date: due.value, currency: cur.value, po_number: form.po_number.value, notes: form.notes.value, lines: readLines() };
+			const body = { customer_id: customerSel.value, project_id: projectSel.value || null, issue_date: issue.value, due_date: due.value, currency: cur.value, po_number: form.po_number.value, notes: form.notes.value, lines: readLines() };
 			let saved = existing ? await api(`/${K.plural}/${existing.id}`, { method: "PUT", body }) : await api(`/${K.plural}`, { method: "POST", body });
 			if (then === "issue") saved = await api(`/invoices/${saved.id}/issue`, { method: "POST" });
 			go(docHref(saved));
@@ -502,6 +517,7 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 			field(K.due, due),
 			field("Currency", cur),
 			field("PO number", input("po_number", doc.po_number, { maxlength: 100 })),
+			projectField,
 		),
 		h("h2", {}, "Lines"),
 		h(
@@ -522,7 +538,7 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 							onclick: () => {
 								if (!customerSel.value) return flash("Choose a customer first.", "error");
 								const onForm = new Set([...linesBody.children].flatMap((tr) => tr._billed ?? []));
-								billableDialog({ customerId: customerSel.value, currency: cur.value, invoiceId: existing?.id ?? null, skip: onForm }, (lines) => {
+								billableDialog({ customerId: customerSel.value, currency: cur.value, invoiceId: existing?.id ?? null, projectId: projectSel.value || null, skip: onForm }, (lines) => {
 									// An empty first line is replaced rather than left above them.
 									const first = linesBody.children[0];
 									if (linesBody.children.length === 1 && !first.querySelector("[name=description]").value && !first.querySelector("[name=unit_price]").value) first.remove();
@@ -554,7 +570,7 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
  * and tagged with them): tick any of them, then add them as one line or each
  * as its own line. `done(lines)` gets the new lines.
  */
-async function billableDialog({ customerId, currency, invoiceId, skip }, done) {
+async function billableDialog({ customerId, currency, invoiceId, projectId = null, skip }, done) {
 	const body = h("div", {}, h("p", { class: "muted" }, "Looking for billable items…"));
 	openDialog(h("h2", {}, "Billable items"), body);
 	let r;
@@ -578,7 +594,9 @@ async function billableDialog({ customerId, currency, invoiceId, skip }, done) {
 		);
 		return;
 	}
-	const boxes = items.map((it) => h("input", { type: "checkbox", checked: true, "aria-label": `Bill ${it.description || it.date}` }));
+	// On a project's invoice, its own costs and unassigned ones are ticked; another project's aren't.
+	const mine = (it) => !projectId || it.project_id === null || String(it.project_id) === String(projectId);
+	const boxes = items.map((it) => h("input", { type: "checkbox", checked: mine(it), "aria-label": `Bill ${it.description || it.date}` }));
 	const total = h("strong");
 	const chosen = () => items.filter((_, i) => boxes[i].checked);
 	const update = () => {
@@ -627,7 +645,7 @@ async function billableDialog({ customerId, currency, invoiceId, skip }, done) {
 							{},
 							h("td", {}, boxes[i]),
 							h("td", {}, it.date),
-							h("td", {}, it.description || "(no description)", h("div", { class: "muted" }, `${it.account_code} ${it.account_name}${it.reference ? ` · ref ${it.reference}` : ""}`)),
+							h("td", {}, it.description || "(no description)", h("div", { class: "muted" }, `${it.account_code} ${it.account_name}${it.reference ? ` · ref ${it.reference}` : ""}${it.project_name ? ` · project ${it.project_name}` : ""}`)),
 							h("td", { class: "num" }, money(it.amount_cents, currency)),
 						),
 					),
@@ -661,6 +679,195 @@ function rootStatusDialog(doc, statuses, path, done) {
 		});
 	};
 	openDialog(form);
+}
+
+// ---- projects --------------------------------------------------------------------------
+
+/** "$1,200.00 CAD + $300.00 USD" from per-currency totals; "—" when nothing. */
+function totalsText(totals, field) {
+	const parts = (totals ?? []).filter((t) => Number(t[field])).map((t) => money(t[field], t.currency));
+	return parts.length ? parts.join(" + ") : "—";
+}
+
+/** New project (for a customer) or edit one. */
+async function projectDialog(p, { customerId = null } = {}, done = () => {}) {
+	const customers = p ? null : (await api("/customers")).data.filter((c) => !c.archived);
+	const custSel = p ? null : select("customer_id", customerId ?? "", [["", "Choose a customer…"], ...customers.map((c) => [String(c.id), c.company ? `${c.name} (${c.company})` : c.name])], { required: true });
+	const form = h(
+		"form",
+		{ method: "dialog" },
+		h("h2", {}, p ? `Edit ${p.name}` : "New project"),
+		custSel ? field("Customer", custSel) : h("p", { class: "muted" }, `For ${p.customer_name}`),
+		field("Name", input("name", p?.name ?? "", { required: true, maxlength: 120, placeholder: "e.g. Kitchen renovation" })),
+		field("Notes", textarea("notes", p?.notes ?? "", { rows: 3, maxlength: 5000 })),
+		h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, p ? "Save" : "Add project"), h("button", { type: "button", onclick: closeDialog }, "Cancel")),
+	);
+	form.onsubmit = (e) => {
+		e.preventDefault();
+		busy(e.submitter, async () => {
+			const o = formData(form);
+			const saved = p ? await api(`/projects/${p.id}`, { method: "PUT", body: { name: o.name, notes: o.notes } }) : await api("/projects", { method: "POST", body: { customer_id: o.customer_id, name: o.name, notes: o.notes } });
+			closeDialog();
+			flash(p ? `${saved.name} saved.` : `Project ${saved.name} added.`);
+			done(saved);
+		});
+	};
+	openDialog(form);
+}
+
+const projectState = { status: "active", q: "" };
+
+/** Projects tab: every customer's projects, with what's invoiced and still owed. */
+async function projectList(qs = new URLSearchParams()) {
+	if (qs.has("status") && ["", "active", "closed"].includes(qs.get("status"))) projectState.status = qs.get("status");
+	const tbody = h("tbody");
+	const load = async () => {
+		const { data } = await api(`/projects?${new URLSearchParams({ status: projectState.status, q: projectState.q })}`);
+		tbody.replaceChildren(
+			...(data.length
+				? data.map((p) =>
+						h(
+							"tr",
+							rowLink(`#/projects/${p.id}`),
+							h("td", {}, p.name),
+							h("td", {}, p.customer_name),
+							h("td", {}, h("span", { class: `badge ${p.status === "active" ? "open" : "void"}` }, p.status)),
+							h("td", { class: "num" }, totalsText(p.totals, "quoted_cents")),
+							h("td", { class: "num" }, totalsText(p.totals, "invoiced_cents")),
+							h("td", { class: "num" }, totalsText(p.totals, "paid_cents")),
+							h("td", { class: "num" }, totalsText(p.totals, "outstanding_cents")),
+						),
+					)
+				: [h("tr", {}, h("td", { colspan: 7, class: "muted" }, projectState.q ? "No matching projects." : "No projects yet. Add one here or from a customer's page."))]),
+		);
+	};
+	const seg = h("div", { class: "seg" });
+	for (const [v, label] of [["active", "Active"], ["closed", "Closed"], ["", "All"]]) {
+		const b = h("button", { class: projectState.status === v ? "on" : "" }, label);
+		b.onclick = () => {
+			projectState.status = v;
+			for (const x of seg.children) x.classList.toggle("on", x === b);
+			load().catch(fail);
+		};
+		seg.append(b);
+	}
+	let t;
+	const search = input("q", projectState.q, { type: "search", placeholder: "Search project or customer" });
+	search.oninput = () => {
+		clearTimeout(t);
+		t = setTimeout(() => ((projectState.q = search.value.trim()), load().catch(fail)), 250);
+	};
+	render(
+		h("h1", {}, "Projects", h("span", { class: "spacer" }), h("button", { class: "primary", onclick: () => projectDialog(null, {}, (p) => go(`#/projects/${p.id}`)) }, "+ New project")),
+		h("div", { class: "filters" }, seg, search),
+		scroll(
+			h(
+				"table",
+				{},
+				h("thead", {}, h("tr", {}, ["Project", "Customer", "Status"].map((x) => h("th", {}, x)), ["Quoted", "Invoiced", "Paid", "Outstanding"].map((x) => h("th", { class: "right" }, x)))),
+				tbody,
+			),
+		),
+	);
+	await load();
+}
+
+/** One project: its totals, invoices, quotes and estimates, and the customer's unbilled costs to assign to it. */
+async function projectView(id) {
+	const [p, settings] = await Promise.all([api(`/projects/${id}`), api("/settings")]);
+	const reload = () => projectView(id).catch(fail);
+	const active = p.status === "active";
+	const act = (label, fn, attrs = {}) => h("button", { ...attrs, onclick: (e) => busy(e.currentTarget, fn) }, label);
+	const newDoc = (plural, label) => h("a", { class: `button${plural === "invoices" ? " primary" : ""}`, href: `#/${plural}/new?${new URLSearchParams({ customer: p.customer_id, project: p.id })}` }, label);
+	const actions = [
+		active ? newDoc("invoices", "+ Invoice") : null,
+		active ? newDoc("quotes", "+ Quote") : null,
+		active ? newDoc("estimates", "+ Estimate") : null,
+		act("Edit", () => projectDialog(p, {}, reload)),
+		act(active ? "Close project" : "Reopen", async () => {
+			await api(`/projects/${p.id}`, { method: "PUT", body: { status: active ? "closed" : "active" } });
+			flash(active ? `${p.name} closed.` : `${p.name} reopened.`);
+			reload();
+		}),
+		h("span", { class: "spacer" }),
+		p.document_count === 0
+			? act("Delete", async () => {
+					if (!confirm(`Delete project ${p.name}?`)) return;
+					await api(`/projects/${p.id}`, { method: "DELETE" });
+					flash(`Project ${p.name} deleted.`);
+					go("#/projects");
+				}, { class: "danger" })
+			: null,
+		settings.root ? h("span", { class: "rootmark", title: "Root mode is on" }, "Root") : null,
+		settings.root
+			? act("Delete", async () => {
+					if (!confirm(`Root: delete project ${p.name}? Its ${p.document_count} invoices, quotes and estimates stay, without a project. It can be put back from Ledger's root log.`)) return;
+					await api(`/root/projects/${p.id}`, { method: "DELETE" });
+					flash(`Project ${p.name} deleted (root).`);
+					go("#/projects");
+				}, { class: "root" })
+			: null,
+	];
+
+	// Unbilled costs: this project's, and unassigned ones that can be added to it.
+	const boxes = p.costs.map((it) => h("input", { type: "checkbox", "aria-label": `Select ${it.description || it.date}` }));
+	const chosen = (assigned) => p.costs.filter((it, i) => boxes[i].checked && (it.project_id !== null) === assigned).map((it) => it.line_id);
+	const assign = (assigned) =>
+		act(assigned ? "Add to this project" : "Take off this project", async () => {
+			const ids = chosen(!assigned);
+			if (!ids.length) throw new Error(assigned ? "Tick costs that aren't on a project yet." : "Tick costs that are on this project.");
+			await api(`/projects/${p.id}/costs`, { method: "PUT", body: { line_ids: ids, assigned } });
+			flash(assigned ? `${ids.length} cost${ids.length === 1 ? "" : "s"} added to ${p.name}.` : `${ids.length} cost${ids.length === 1 ? "" : "s"} taken off ${p.name}.`);
+			reload();
+		});
+
+	render(
+		h("p", {}, h("a", { href: "#/projects" }, "← Projects")),
+		h("h1", {}, p.name, h("span", { class: `badge ${active ? "open" : "void"}` }, p.status)),
+		h("p", {}, "For ", h("a", { href: `#/customers/${p.customer_id}` }, p.customer_name), p.customer_company ? h("span", { class: "muted" }, ` (${p.customer_company})`) : null),
+		h("div", { class: "actions" }, actions),
+		p.notes ? h("div", { class: "box" }, p.notes) : null,
+		h(
+			"div",
+			{ class: "cards", style: "margin-top:0.75rem" },
+			[["Quoted", "quoted_cents"], ["Invoiced", "invoiced_cents"], ["Paid", "paid_cents"], ["Outstanding", "outstanding_cents"]].map(([label, f]) =>
+				h("div", { class: "card" }, h("div", { class: "label" }, label), h("div", { class: "value" }, totalsText(p.totals, f))),
+			),
+		),
+		h("h2", {}, "Invoices, quotes and estimates"),
+		p.documents.length
+			? table(
+					["Date", "Type", "Number", "Status", ["Amount", "right"]],
+					p.documents.map((d) =>
+						h("tr", rowLink(docHref(d)), h("td", {}, d.issue_date), h("td", {}, KINDS[d.kind].label), h("td", {}, d.number), h("td", {}, badge(d)), h("td", { class: "num" }, money(d.total_cents, d.currency))),
+					),
+				)
+			: h("p", { class: "muted" }, active ? "Nothing yet. Start an invoice, quote or estimate above." : "Nothing on this project."),
+		h("h2", {}, "Billable costs"),
+		...p.problems.map((x) => h("p", { style: "color:var(--warn)" }, x)),
+		p.costs.length
+			? [
+					h("p", { class: "hint" }, `Unbilled costs tagged with ${p.customer_name} in Ledger: this project's, and ones not on a project yet. A project's costs are ticked first when you bill them on its invoice.`),
+					scroll(
+						table(
+							["", "Date", "Cost", "Project", ["Amount", "right"]],
+							p.costs.map((it, i) =>
+								h(
+									"tr",
+									{},
+									h("td", {}, boxes[i]),
+									h("td", {}, it.date),
+									h("td", {}, it.description || "(no description)", h("div", { class: "muted" }, `${it.account_code} ${it.account_name}`)),
+									h("td", {}, it.project_id ? p.name : h("span", { class: "muted" }, "—")),
+									h("td", { class: "num" }, money(it.amount_cents, it.currency)),
+								),
+							),
+						),
+					),
+					h("div", { class: "actions" }, active ? assign(true) : null, assign(false)),
+				]
+			: h("p", { class: "muted" }, `No unbilled costs for ${p.customer_name}. Post a cost to Sales' clearing account "Billable costs to recharge" in Ledger and tag it with the customer.`),
+	);
 }
 
 // ---- document view -----------------------------------------------------------------
@@ -766,6 +973,7 @@ async function docView(kind, id) {
 		[K.due, doc.due_date],
 		["Currency", doc.currency],
 		doc.po_number ? ["PO number", doc.po_number] : null,
+		doc.project ? ["Project", h("a", { href: `#/projects/${doc.project.id}` }, doc.project.name)] : null,
 		doc.source ? ["Created from", h("a", { href: docHref(doc.source) }, `${KINDS[doc.source.kind].label} ${doc.source.number}`)] : null,
 		doc.converted ? ["Invoiced as", h("a", { href: docHref(doc.converted) }, `Invoice ${doc.converted.number}`)] : null,
 		doc.sent_at ? ["Last emailed", when(doc.sent_at)] : null,
@@ -1207,7 +1415,8 @@ async function customerForm(idOrNull) {
 }
 
 async function customerView(id) {
-	const [c, taxes, settings] = await Promise.all([api(`/customers/${id}`), api("/taxes"), api("/settings")]);
+	const [c, taxes, settings, projectList_] = await Promise.all([api(`/customers/${id}`), api("/taxes"), api("/settings"), api(`/projects?customer_id=${id}`)]);
+	const projects = projectList_.data;
 	const reload = () => customerView(id).catch(fail);
 	const taxNames = c.tax_ids === null ? "default" : c.tax_ids.map((t) => taxes.data.find((x) => String(x.id) === String(t))?.name ?? "?").join(" + ") || "none (exempt)";
 	const info = [
@@ -1266,6 +1475,22 @@ async function customerView(id) {
 			h("table", {}, h("tbody", {}, info.map(([k, v]) => h("tr", {}, h("td", { class: "muted" }, k), h("td", {}, v))))),
 			h("div", {}, c.address ? [h("div", { class: "muted" }, "Billing address"), h("div", { class: "box" }, c.address)] : null, c.notes ? [h("div", { class: "muted", style: "margin-top:0.75rem" }, "Notes"), h("div", { class: "box" }, c.notes)] : null),
 		),
+		h("h2", {}, "Projects", h("span", { class: "spacer" }), h("button", { onclick: () => projectDialog(null, { customerId: c.id }, (p) => go(`#/projects/${p.id}`)) }, "+ Project")),
+		projects.length
+			? table(
+					["Project", "Status", ["Invoiced", "right"], ["Outstanding", "right"]],
+					projects.map((p) =>
+						h(
+							"tr",
+							rowLink(`#/projects/${p.id}`),
+							h("td", {}, p.name),
+							h("td", {}, h("span", { class: `badge ${p.status === "active" ? "open" : "void"}` }, p.status)),
+							h("td", { class: "num" }, totalsText(p.totals, "invoiced_cents")),
+							h("td", { class: "num" }, totalsText(p.totals, "outstanding_cents")),
+						),
+					),
+				)
+			: h("p", { class: "muted" }, "No projects yet."),
 		h("h2", {}, "Transactions"),
 		rows.length
 			? table(

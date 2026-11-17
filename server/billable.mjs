@@ -106,6 +106,21 @@ export function billableItems(ctx, h) {
 			}
 		}
 		out.items.sort((a, b) => (a.date === b.date ? Number(a.line_id) - Number(b.line_id) : a.date < b.date ? -1 : 1));
+		// Which project each cost was assigned to (0.17.0), if any.
+		if (out.items.length) {
+			const { rows: assigned } = await q(
+				`SELECT pc.ledger_line_id::text AS line_id, p.id AS project_id, p.name AS project_name
+				   FROM ${T("project_costs")} pc JOIN ${T("projects")} p ON p.id = pc.project_id
+				  WHERE pc.ledger_line_id = ANY($1::bigint[])`,
+				[out.items.map((i) => i.line_id)],
+			);
+			const byLine = new Map(assigned.map((r) => [r.line_id, r]));
+			for (const it of out.items) {
+				const a = byLine.get(String(it.line_id));
+				it.project_id = a ? String(a.project_id) : null;
+				it.project_name = a ? a.project_name : null;
+			}
+		}
 		return out;
 	}
 

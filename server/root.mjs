@@ -6,7 +6,7 @@
 // No journal entries are posted or reversed here: the books are root's to fix.
 
 const ROW_COLUMNS = {
-	documents: ["status", "number", "issue_date", "due_date", "currency", "po_number", "notes", "paid_cents", "subtotal_cents", "tax_cents", "total_cents", "journal_entry_id", "void_entry_id", "sent_at"],
+	documents: ["status", "number", "issue_date", "due_date", "currency", "po_number", "notes", "paid_cents", "subtotal_cents", "tax_cents", "total_cents", "journal_entry_id", "void_entry_id", "sent_at", "project_id"],
 	payments: ["payment_date", "amount_cents", "method", "reference", "journal_entry_id", "matched_entry_id"],
 	customers: ["company", "cc_emails", "tax_id", "currency", "terms_days", "archived"],
 };
@@ -94,6 +94,18 @@ export function rootRoutes(ctx, h) {
 		return { deleted: true };
 	});
 
+	// A project, whatever is on it: its documents leave it, its cost assignments go.
+	ctx.route("DELETE", "/root/projects/:id", async (req) => {
+		needRoot(req);
+		const pid = id(req, "id", "project");
+		const { rows } = await q(`SELECT name FROM ${T("projects")} WHERE id = $1`, [pid]);
+		if (!rows[0]) throw notFound("project");
+		for (const d of (await q(`SELECT id FROM ${T("documents")} WHERE project_id = $1`, [pid])).rows) await root.update(req, "documents", d.id, { project_id: null });
+		for (const c of (await q(`SELECT id FROM ${T("project_costs")} WHERE project_id = $1`, [pid])).rows) await root.remove(req, "project_costs", c.id);
+		await root.remove(req, "projects", pid, `Sales: deleted project ${rows[0].name}`);
+		return { deleted: true };
+	});
+
 	// What must be put right before root mode can be left.
 	root?.onCheck(async () => {
 		const problems = [];
@@ -114,6 +126,11 @@ export function rootRoutes(ctx, h) {
 			  WHERE kind = 'invoice' AND ((status = 'paid' AND paid_cents < total_cents) OR (status = 'open' AND total_cents > 0 AND paid_cents >= total_cents) OR status = 'posting')
 			  ORDER BY id LIMIT 20`,
 		);
+		const foreign = await q(
+			`SELECT d.kind, d.number, p.name FROM ${T("documents")} d JOIN ${T("projects")} p ON p.id = d.project_id
+			  WHERE p.customer_id <> d.customer_id ORDER BY d.id LIMIT 20`,
+		);
+		for (const r of foreign.rows) problems.push(`${r.kind} ${r.number} is on project ${r.name}, which is another customer's.`);
 		for (const r of status.rows) problems.push(`invoice ${r.number} is "${r.status}", which doesn't match what's paid on it.`);
 		return problems;
 	});

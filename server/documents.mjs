@@ -28,6 +28,7 @@ const COLUMN_TYPES = {
 	tax_cents: "bigint",
 	total_cents: "bigint",
 	source_id: "bigint",
+	project_id: "bigint",
 };
 const OPEN_QUOTE = ["draft", "sent"];
 
@@ -105,6 +106,22 @@ export function documentRoutes(ctx, h, mail, tags) {
 				return { category_id: category ? String(category.id) : null, description, quantity, unit_price_cents: unit, taxes: lineTaxes, billed_ledger_line_ids: billed };
 			});
 		}
+		// The project, if any: one of this customer's, and active unless it already was this document's.
+		let projectId = existing?.project_id ?? null;
+		if (o.project_id !== undefined) {
+			projectId = o.project_id === null || o.project_id === "" ? null : o.project_id;
+			if (projectId !== null) {
+				if (!isId(projectId)) throw bad("project_id is not valid");
+				const { rows: pr } = await q(`SELECT id, customer_id, status FROM ${T("projects")} WHERE id = $1`, [String(projectId)]);
+				if (!pr[0]) throw bad("project_id: there is no such project");
+				if (String(pr[0].customer_id) !== String(cust.id)) throw bad("project_id: that project is another customer's");
+				if (pr[0].status !== "active" && String(existing?.project_id ?? "") !== String(projectId)) throw bad("project_id: that project is closed");
+				projectId = String(pr[0].id);
+			}
+		} else if (projectId !== null && existing && String(existing.customer_id) !== String(cust.id)) {
+			// A new customer: the old customer's project doesn't apply.
+			projectId = null;
+		}
 		// Billable items must still be this customer's, in this currency, and not billed elsewhere.
 		await billable.check(String(cust.id), cur, lines.map((l) => (l.billed_ledger_line_ids ?? []).map(String)), existing?.id ?? null);
 		const totals = computeTotals(lines);
@@ -120,6 +137,7 @@ export function documentRoutes(ctx, h, mail, tags) {
 				subtotal_cents: totals.subtotal.toString(),
 				tax_cents: totals.tax.toString(),
 				total_cents: totals.total.toString(),
+				project_id: projectId === null ? null : String(projectId),
 			},
 			linesJson: JSON.stringify(
 				lines.map((l, i) => ({
@@ -181,7 +199,8 @@ export function documentRoutes(ctx, h, mail, tags) {
 			                           'address', c.address, 'tax_id', c.tax_id, 'phone', c.phone,
 			                           'entity_id', c.entity_id, 'entity_active', c.entity_active) AS customer,
 			        (SELECT jsonb_build_object('id', s.id, 'kind', s.kind, 'number', s.number) FROM ${T("documents")} s WHERE s.id = d.source_id) AS source,
-			        (SELECT jsonb_build_object('id', v.id, 'kind', v.kind, 'number', v.number) FROM ${T("documents")} v WHERE v.id = d.converted_id) AS converted
+			        (SELECT jsonb_build_object('id', v.id, 'kind', v.kind, 'number', v.number) FROM ${T("documents")} v WHERE v.id = d.converted_id) AS converted,
+			        (SELECT jsonb_build_object('id', pj.id, 'name', pj.name, 'status', pj.status) FROM ${T("projects")} pj WHERE pj.id = d.project_id) AS project
 			   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
 			  WHERE d.id = $1`,
 			[did],
@@ -582,6 +601,8 @@ ${paras}
 			const search = (req.query.get("q") ?? "").trim();
 			const customer = req.query.get("customer_id") ?? "";
 			if (customer && !/^\d{1,18}$/.test(customer)) throw bad("customer_id is not valid");
+			const project = req.query.get("project_id") ?? "";
+			if (project && !/^\d{1,18}$/.test(project)) throw bad("project_id is not valid");
 			const where = Object.hasOwn(LIST_FILTERS[kind], status) ? LIST_FILTERS[kind][status] : null;
 			if (!where) throw bad(`status must be one of: ${Object.keys(LIST_FILTERS[kind]).filter(Boolean).join(", ")}`);
 			const { rows } = await q(
@@ -591,10 +612,11 @@ ${paras}
 				  WHERE d.kind = $5 AND ${where}
 				    AND ($1 = '' OR d.number ILIKE $2 OR c.name ILIKE $2 OR c.company ILIKE $2 OR d.po_number ILIKE $2)
 				    AND ($3 = '' OR d.customer_id = nullif($3, '')::bigint)
+				    AND ($6 = '' OR d.project_id = nullif($6, '')::bigint)
 				    AND $4::date IS NOT NULL
 				  ORDER BY d.issue_date DESC, d.id DESC
 				  LIMIT 500`,
-				[search, like(search), customer, today(), kind],
+				[search, like(search), customer, today(), kind, project],
 			);
 			const t = today();
 			return {
@@ -639,7 +661,15 @@ ${paras}
 		ctx.route("DELETE", `${base}/:id`, async (req) => {
 			const did = docId(req);
 			const allowed = isInvoice ? ["draft"] : ["draft", "sent", "accepted", "declined"];
-			const { rowCount } = await q(`DELETE FROM ${T("documents")} WHERE id = $1 AND kind = $2 AND status = ANY($3::text[])`, [did, kind, allowed]);
+			// A draft invoice made from a quote or estimate: that one is accepted again, free to convert anew.
+			const { rows: gone } = await q(
+				`WITH del AS (DELETE FROM ${T("documents")} WHERE id = $1 AND kind = $2 AND status = ANY($3::text[]) RETURNING id),
+				      rel AS (UPDATE ${T("documents")} SET converted_id = NULL, status = 'accepted', updated_at = now()
+				               WHERE converted_id IN (SELECT id FROM del) AND status = 'converted')
+				 SELECT id FROM del`,
+				[did, kind, allowed],
+			);
+			const rowCount = gone.length;
 			if (rowCount === 0) {
 				await getDocument(did, kind); // 404 when missing
 				throw conflict(isInvoice ? "only drafts can be deleted; void an issued invoice instead" : `this ${kind} was converted to an invoice and can't be deleted`);
@@ -657,6 +687,7 @@ ${paras}
 					issue_date: today(),
 					currency: src.currency,
 					notes: src.notes,
+					project_id: src.project?.status === "active" ? String(src.project.id) : null,
 					lines: src.lines.map((l) => ({
 						category_id: l.category_id,
 						description: l.description,
@@ -840,6 +871,7 @@ ${paras}
 					tax_cents: String(src.tax_cents),
 					total_cents: String(src.total_cents),
 					source_id: String(src.id),
+					project_id: src.project_id === null || src.project_id === undefined ? null : String(src.project_id),
 				};
 				// The invoice keeps the quoted lines, categories and tax rates as they were.
 				const linesJson = JSON.stringify(
