@@ -103,7 +103,14 @@ export function documentRoutes(ctx, h, mail, tags) {
 					if (!Array.isArray(l.billed_ledger_line_ids) || l.billed_ledger_line_ids.length > 500) throw bad(`${f("billed_ledger_line_ids")} must be a list of billable items`);
 					billed = idList(l.billed_ledger_line_ids, f("billed_ledger_line_ids")).map(String);
 				}
-				return { category_id: category ? String(category.id) : null, description, quantity, unit_price_cents: unit, taxes: lineTaxes, billed_ledger_line_ids: billed };
+				// The billed cost's rate item it was filled from (Ledger's tag "rate"), if any.
+				let rateTag = null;
+				if (l.rate_tag_id !== undefined && l.rate_tag_id !== null && l.rate_tag_id !== "") {
+					if (!isId(l.rate_tag_id)) throw bad(`${f("rate_tag_id")} is not valid`);
+					if (billed.length !== 1) throw bad(`${f("rate_tag_id")}: a line from a rate item bills exactly one billable item`);
+					rateTag = String(l.rate_tag_id);
+				}
+				return { category_id: category ? String(category.id) : null, description, quantity, unit_price_cents: unit, taxes: lineTaxes, billed_ledger_line_ids: billed, rate_tag_id: rateTag };
 			});
 		}
 		// The project, if any: one of this customer's, and active unless it already was this document's.
@@ -123,7 +130,7 @@ export function documentRoutes(ctx, h, mail, tags) {
 			projectId = null;
 		}
 		// Billable items must still be this customer's, in this currency, and not billed elsewhere.
-		await billable.check(String(cust.id), cur, lines.map((l) => (l.billed_ledger_line_ids ?? []).map(String)), existing?.id ?? null);
+		await billable.check(String(cust.id), cur, lines.map((l) => (l.billed_ledger_line_ids ?? []).map(String)), existing?.id ?? null, lines.map((l) => (l.rate_tag_id === null || l.rate_tag_id === undefined ? null : String(l.rate_tag_id))));
 		const totals = computeTotals(lines);
 		if (totals.total > MAX_CENTS || totals.total < -MAX_CENTS) throw bad("the total is too large");
 		return {
@@ -149,16 +156,17 @@ export function documentRoutes(ctx, h, mail, tags) {
 					taxes: l.taxes,
 					amount_cents: totals.amounts[i].toString(),
 					billed_ledger_line_ids: (l.billed_ledger_line_ids ?? []).map(String),
+					rate_tag_id: l.rate_tag_id === null || l.rate_tag_id === undefined ? null : String(l.rate_tag_id),
 				})),
 			),
 		};
 	}
 
 	const LINES_FROM_JSON = (src, param) => `
-		INSERT INTO ${T("document_lines")} (document_id, position, category_id, description, quantity, unit_price_cents, taxes, amount_cents, billed_ledger_line_ids)
-		SELECT ${src}.id, x.position, x.category_id, x.description, x.quantity, x.unit_price_cents, x.taxes, x.amount_cents, coalesce(x.billed_ledger_line_ids, '{}')
+		INSERT INTO ${T("document_lines")} (document_id, position, category_id, description, quantity, unit_price_cents, taxes, amount_cents, billed_ledger_line_ids, rate_tag_id)
+		SELECT ${src}.id, x.position, x.category_id, x.description, x.quantity, x.unit_price_cents, x.taxes, x.amount_cents, coalesce(x.billed_ledger_line_ids, '{}'), x.rate_tag_id
 		  FROM ${src}, jsonb_to_recordset(${param}::jsonb)
-		       AS x(position int, category_id bigint, description text, quantity bigint, unit_price_cents bigint, taxes jsonb, amount_cents bigint, billed_ledger_line_ids bigint[])`;
+		       AS x(position int, category_id bigint, description text, quantity bigint, unit_price_cents bigint, taxes jsonb, amount_cents bigint, billed_ledger_line_ids bigint[], rate_tag_id bigint)`;
 
 	/** Inserts a draft with the kind's next number, skipping numbers already taken. */
 	async function insertDocument(kind, cols, linesJson, user) {
@@ -210,7 +218,7 @@ export function documentRoutes(ctx, h, mail, tags) {
 		const [lines, payments, emails] = await Promise.all([
 			q(
 				`SELECT l.id, l.position, l.category_id, cat.name AS category_name, l.description, l.quantity, l.unit_price_cents, l.taxes, l.amount_cents,
-				        l.billed_ledger_line_ids::text[] AS billed_ledger_line_ids
+				        l.billed_ledger_line_ids::text[] AS billed_ledger_line_ids, l.rate_tag_id::text AS rate_tag_id
 				   FROM ${T("document_lines")} l LEFT JOIN ${T("categories")} cat ON cat.id = l.category_id
 				  WHERE l.document_id = $1 ORDER BY l.position, l.id`,
 				[did],
@@ -279,6 +287,7 @@ export function documentRoutes(ctx, h, mail, tags) {
 		if (!receivable) throw bad(`Ledger posting is on, but no receivable account is set for ${cur} (Settings → Sales → Accounts)`);
 		const [categories, taxes] = await Promise.all([loadCategories(), loadTaxes()]);
 		const credits = new Map(); // account → cents
+		const cleared = new Set();
 		const add = (acct, cents, memo) => credits.set(acct, { cents: (credits.get(acct)?.cents ?? 0n) + cents, memo });
 		doc.lines.forEach((l, i) => {
 			const cat = l.category_id === null ? null : categories.get(String(l.category_id));
@@ -290,7 +299,14 @@ export function documentRoutes(ctx, h, mail, tags) {
 						: `line ${i + 1} has no category, and no default ${cur} revenue account is set (Settings → Sales → Accounts)`,
 				);
 			}
-			const cost = clearingCode ? (l.billed_ledger_line_ids ?? []).reduce((n, id) => n + (fromClearing.get(String(id)) ?? 0n), 0n) : 0n;
+			// A cost split over several lines (one per rate item) is cleared once, on its first line.
+			const cost = clearingCode
+				? (l.billed_ledger_line_ids ?? []).reduce((n, id) => {
+						if (cleared.has(String(id))) return n;
+						cleared.add(String(id));
+						return n + (fromClearing.get(String(id)) ?? 0n);
+					}, 0n)
+				: 0n;
 			if (cost !== 0n) add(clearingCode, cost, "Billable costs");
 			add(acct, totals.amounts[i] - cost, cat ? cat.name : "Sales");
 		});

@@ -200,6 +200,14 @@ payments to the books.
 - Billable items carry their entry's tags (`tags`, labels like "vendor:
   Hydro One", without the customer's own customer tag); the picker filters
   by tag and date range in the browser, and adds only shown, ticked items.
+- Billable items also carry their entry's rate items (`rates`, from the
+  tag "rate" on `e.tags`, `rateItems()` in `billable.mjs`; "rate" is left
+  out of `tags`). The picker's "Use item tags" makes one invoice line per
+  rate item: `document_lines.rate_tag_id` names the item, and several lines
+  may then bill the same journal line (`billable.check` allows it only with
+  distinct rate ids; `postingLines()` clears the cost once). A billed line
+  without a rate item gets a "Description from a tag…" dropdown of its
+  costs' tags (the form looks them up for saved drafts).
 - Billable costs carry Ledger tags: "billed" while an issued invoice bills
   them, and "paid" while that invoice is paid (`documents.paid_entry_ids`,
   `syncBillablePaid()` in `tags.mjs`). Sales only takes off a tag it set

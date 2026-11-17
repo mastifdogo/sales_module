@@ -119,6 +119,14 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.18.0**: an invoice line that bills costs from Ledger has a
+  **Description from a tag…** dropdown with every tag on those costs'
+  entries; picking one fills the description. **+ Billable items** can
+  **use item tags** (Ledger's rate items: description, quantity, unit and
+  rate, Ledger 0.24.0 and later): a cost with items becomes one line per
+  item, with the item's description, quantity and rate (the line remembers
+  its item and has no tag dropdown). A cost split over several lines is
+  still billed once, and its cost is taken out of the clearing account once.
 - **0.17.1**: **+ Billable items** can be filtered by tag (the entry's tags
   in Ledger, such as a vendor or "materials", or "No tags") and by a date
   range; each item shows its tags, and only the items shown and ticked are

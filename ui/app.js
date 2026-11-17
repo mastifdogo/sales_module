@@ -435,9 +435,15 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 	const catOptions = (selected) => [["", "— none —"], ...cats.data.filter((c) => c.active || String(c.id) === String(selected ?? "")).map((c) => [c.id, c.name])];
 	const linesBody = h("tbody");
 	const totals = h("tbody");
+	// Billable items seen in this form (line id → item, with its tags and rate items),
+	// for the description choices of lines that bill them.
+	const billableById = new Map();
 	const addLine = (l = {}) => {
 		const catSel = select("category_id", l.category_id ?? "", catOptions(l.category_id));
 		const picker = taxPicker(taxes.data, l.tax_ids ?? defaultTaxes(l.category_id), () => ((row._touched = true), recalc()));
+		const billedIds = (l.billed_ledger_line_ids ?? []).map(String);
+		const desc = textarea("description", l.description ?? "", { rows: 1, placeholder: "Description", required: true });
+		const fromTag = h("span");
 		const row = h(
 			"tr",
 			{},
@@ -445,8 +451,11 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 			h(
 				"td",
 				{ class: "desc" },
-				textarea("description", l.description ?? "", { rows: 1, placeholder: "Description", required: true }),
-				(l.billed_ledger_line_ids ?? []).length ? h("div", { class: "hint" }, `Bills ${l.billed_ledger_line_ids.length} billable item${l.billed_ledger_line_ids.length === 1 ? "" : "s"} from Ledger`) : null,
+				desc,
+				fromTag,
+				billedIds.length
+					? h("div", { class: "hint" }, `Bills ${billedIds.length} billable item${billedIds.length === 1 ? "" : "s"} from Ledger`, l.rate_tag_id ? " · description from its item tag" : "")
+					: null,
 			),
 			h("td", { class: "qty", "data-label": "Qty" }, input("quantity", l.quantity_text ?? "1", { inputmode: "decimal" })),
 			h("td", { class: "price", "data-label": "Unit price" }, input("unit_price", l.unit_price_cents !== undefined ? fmtDec(l.unit_price_cents, 2) : "", { inputmode: "decimal", placeholder: "0.00" })),
@@ -455,7 +464,27 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 			h("td", { class: "rm" }, h("button", { type: "button", class: "link", title: "Remove line", "aria-label": "Remove line", onclick: () => (row.remove(), recalc()) }, "✕")),
 		);
 		row._taxes = picker;
-		row._billed = (l.billed_ledger_line_ids ?? []).map(String);
+		row._billed = billedIds;
+		row._rate = l.rate_tag_id ? String(l.rate_tag_id) : null;
+		// A line billing costs from Ledger takes its description from their tags (a
+		// dropdown of every tag on those entries), unless it came from a rate item:
+		// then it is that item's description.
+		row._tagChoices = () => {
+			if (!billedIds.length || row._rate) return;
+			const tags = [...new Set(billedIds.flatMap((id) => billableById.get(id)?.tags ?? []))].sort();
+			if (!tags.length) return fromTag.replaceChildren();
+			const sel = select("description_tag", "", [["", "Description from a tag…"], ...tags.map((t) => [t, t])], { "aria-label": "Description from a tag", "data-no-resize": "" });
+			sel.onchange = () => {
+				if (!sel.value) return;
+				// "vendor: Hydro One" → "Hydro One"; a plain tag as it is.
+				const i = sel.value.indexOf(": ");
+				desc.value = i < 0 ? sel.value : sel.value.slice(i + 2);
+				sel.value = "";
+				recalc();
+			};
+			fromTag.replaceChildren(h("div", {}, sel));
+		};
+		row._tagChoices();
 		row._touched = Boolean(existing && l.description !== undefined);
 		catSel.onchange = () => {
 			if (!row._touched || catById.get(catSel.value)?.tax_ids) picker.set(defaultTaxes(catSel.value));
@@ -467,7 +496,7 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 	function readLines() {
 		return [...linesBody.children].map((tr) => {
 			const get = (n) => tr.querySelector(`[name="${n}"]`).value;
-			return { category_id: get("category_id") || null, description: get("description"), quantity: get("quantity"), unit_price: get("unit_price"), tax_ids: tr._taxes.get(), billed_ledger_line_ids: tr._billed };
+			return { category_id: get("category_id") || null, description: get("description"), quantity: get("quantity"), unit_price: get("unit_price"), tax_ids: tr._taxes.get(), billed_ledger_line_ids: tr._billed, rate_tag_id: tr._rate };
 		});
 	}
 	function recalc() {
@@ -493,8 +522,17 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 		rows.push(h("tr", { class: "total" }, h("td", {}, "Total"), h("td", { class: "num" }, money(subtotal + tax, cur.value))));
 		totals.replaceChildren(...rows);
 	}
-	(doc.lines.length ? doc.lines : [{}]).forEach(addLine);
+	(doc.lines.length ? doc.lines : [{}]).forEach((l) => addLine(l));
 	recalc();
+	// A saved draft's billed lines: look up their items' tags for the description dropdowns.
+	if (kind === "invoice" && existing && doc.lines.some((l) => (l.billed_ledger_line_ids ?? []).length && !l.rate_tag_id)) {
+		api(`/customers/${doc.customer_id}/billable?${new URLSearchParams({ currency: doc.currency, invoice: existing.id })}`)
+			.then((r) => {
+				for (const it of r.items) billableById.set(String(it.line_id), it);
+				for (const tr of linesBody.children) tr._tagChoices?.();
+			})
+			.catch(() => {});
+	}
 	await loadProjects(doc.project_id ?? null);
 
 	const save = async (btn, then) =>
@@ -538,7 +576,8 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 							onclick: () => {
 								if (!customerSel.value) return flash("Choose a customer first.", "error");
 								const onForm = new Set([...linesBody.children].flatMap((tr) => tr._billed ?? []));
-								billableDialog({ customerId: customerSel.value, currency: cur.value, invoiceId: existing?.id ?? null, projectId: projectSel.value || null, skip: onForm }, (lines) => {
+								billableDialog({ customerId: customerSel.value, currency: cur.value, invoiceId: existing?.id ?? null, projectId: projectSel.value || null, skip: onForm }, (lines, items) => {
+									for (const it of items) billableById.set(String(it.line_id), it);
 									// An empty first line is replaced rather than left above them.
 									const first = linesBody.children[0];
 									if (linesBody.children.length === 1 && !first.querySelector("[name=description]").value && !first.querySelector("[name=unit_price]").value) first.remove();
@@ -618,31 +657,60 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 			if (!rows[i].hidden) visible++;
 		});
 		const c = chosen();
-		total.textContent = `${c.length} of ${visible} shown selected${visible < items.length ? ` (${items.length - visible} hidden by the filters)` : ""} · ${money(c.reduce((n, i) => n + BigInt(i.amount_cents), 0n), currency)}`;
+		const nRates = useRates.checked ? c.reduce((n, i) => n + (i.rates ?? []).length, 0) : 0;
+		total.textContent = `${c.length} of ${visible} shown selected${visible < items.length ? ` (${items.length - visible} hidden by the filters)` : ""} · ${money(c.reduce((n, i) => n + BigInt(i.amount_cents), 0n), currency)}${nRates ? ` · ${nRates} line${nRates === 1 ? "" : "s"} from item tags` : ""}`;
 		for (const b of buttons) b.disabled = c.length === 0;
 		all.checked = visible > 0 && items.every((it, i) => !shown(it) || boxes[i].checked);
 	};
 	tagSel.onchange = from.onchange = to.onchange = () => update();
 	const clear = h("button", { type: "button", class: "link", onclick: () => ((tagSel.value = ""), (from.value = ""), (to.value = ""), update()) }, "Clear filters");
 	const label = (it) => [it.description || "Billable item", it.date].join(" · ");
+	// Costs with rate items in Ledger (tag "rate": what was counted, how many, at what
+	// rate) can fill one line per item instead: its description, quantity and rate.
+	const hasRates = items.some((it) => (it.rates ?? []).length);
+	const useRates = h("input", { type: "checkbox", checked: hasRates, onchange: () => update() });
+	const qtyText = (v) => (v === null || v === undefined ? "1" : String(Number(Number(v).toFixed(3))));
+	const rateLines = (it) =>
+		it.rates.map((r) => ({
+			description: (r.description || it.description || "Billable item").slice(0, 1000),
+			quantity_text: r.quantity === null ? "1" : qtyText(r.quantity),
+			// No rate on the item: the cost spread over its quantity when it's the only item;
+			// otherwise left for a person to fill in.
+			unit_price_cents:
+				r.rate_cents ?? (it.rates.length === 1 ? (r.quantity === null ? it.amount_cents : String(Math.round(Number(it.amount_cents) / Number(qtyText(r.quantity))))) : undefined),
+			billed_ledger_line_ids: [it.line_id],
+			rate_tag_id: r.id,
+		}));
+	// Split what's chosen: costs filled from their rate items, and the rest.
+	const split = (c) => {
+		const byRates = useRates.checked ? c.filter((i) => (i.rates ?? []).length) : [];
+		return { byRates, rest: c.filter((i) => !byRates.includes(i)) };
+	};
 	const buttons = [
 		h("button", {
 			type: "button",
 			class: "primary",
 			onclick: () => {
-				const c = chosen();
-				const sum = c.reduce((n, i) => n + BigInt(i.amount_cents), 0n);
-				const description = c.length === 1 ? label(c[0]) : ["Billable items:", ...c.map((i) => `• ${label(i)} – ${money(i.amount_cents, currency)}`)].join("\n").slice(0, 1000);
+				const { byRates, rest: c } = split(chosen());
+				const out = byRates.flatMap(rateLines);
+				if (c.length) {
+					const sum = c.reduce((n, i) => n + BigInt(i.amount_cents), 0n);
+					const description = c.length === 1 ? label(c[0]) : ["Billable items:", ...c.map((i) => `• ${label(i)} – ${money(i.amount_cents, currency)}`)].join("\n").slice(0, 1000);
+					out.push({ description, quantity_text: "1", unit_price_cents: sum.toString(), billed_ledger_line_ids: c.map((i) => i.line_id) });
+				}
 				closeDialog();
-				done([{ description, quantity_text: "1", unit_price_cents: sum.toString(), billed_ledger_line_ids: c.map((i) => i.line_id) }]);
+				done(out, items);
 			},
 		}, "Add as one line"),
 		h("button", {
 			type: "button",
 			onclick: () => {
-				const c = chosen();
+				const byItem = new Set(split(chosen()).byRates);
 				closeDialog();
-				done(c.map((i) => ({ description: label(i), quantity_text: "1", unit_price_cents: i.amount_cents, billed_ledger_line_ids: [i.line_id] })));
+				done(
+					chosen().flatMap((i) => (byItem.has(i) ? rateLines(i) : [{ description: label(i), quantity_text: "1", unit_price_cents: i.amount_cents, billed_ledger_line_ids: [i.line_id] }])),
+					items,
+				);
 			},
 		}, "Add each as its own line"),
 	];
@@ -659,6 +727,14 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 			field("To", to),
 			h("div", { style: "align-self:end" }, clear),
 		),
+		hasRates
+			? h(
+					"label",
+					{ class: "check" },
+					useRates,
+					h("span", {}, "Use item tags to fill the lines: a cost with items (description, quantity and rate, tagged in Ledger) becomes one line per item"),
+				)
+			: null,
 		scroll(
 			h(
 				"table",
@@ -679,6 +755,23 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 								it.description || "(no description)",
 								h("div", { class: "muted" }, `${it.account_code} ${it.account_name}${it.reference ? ` · ref ${it.reference}` : ""}${it.project_name ? ` · project ${it.project_name}` : ""}`),
 								(it.tags ?? []).length ? h("div", {}, it.tags.map((t) => h("span", { class: "badge draft", style: "margin-right:0.25rem" }, t))) : null,
+								(it.rates ?? []).length
+									? h(
+											"div",
+											{ class: "muted" },
+											it.rates.map((r) =>
+												h(
+													"div",
+													{},
+													"Item: ",
+													r.description || "(no description)",
+													r.quantity !== null ? ` · ${qtyText(r.quantity)}${r.unit ? ` ${r.unit}` : ""}` : "",
+													r.rate_cents !== null ? ` × ${money(r.rate_cents, currency)}` : "",
+													r.amount_cents !== null ? ` = ${money(r.amount_cents, currency)}` : "",
+												),
+											),
+										)
+									: null,
 							),
 							h("td", { class: "num" }, money(it.amount_cents, currency)),
 						)),

@@ -14,6 +14,31 @@ export const CLEARING_KEY = "billable_costs";
 export const CLEARING_NAME = "Billable costs to recharge";
 const MAX_PAGES = 20; // up to 10,000 entries per account
 
+/**
+ * An entry's rate items (Ledger's tag "rate"), as invoice lines want them:
+ * [{ id, description, quantity, unit, rate_cents, amount_cents }]. Items
+ * with neither a quantity nor a rate are left out.
+ */
+export function rateItems(tags) {
+	const out = [];
+	for (const t of tags ?? []) {
+		if (t?.tag !== "rate" || t.id === undefined || t.id === null) continue;
+		const qty = t.quantity === null || t.quantity === undefined || t.quantity === "" ? null : Number(t.quantity);
+		const rate = t.rate_cents === null || t.rate_cents === undefined || t.rate_cents === "" ? null : Number(t.rate_cents);
+		if ((qty === null || !Number.isFinite(qty)) && (rate === null || !Number.isFinite(rate))) continue;
+		const amount = qty !== null && rate !== null ? Math.round(qty * rate) : null;
+		out.push({
+			id: String(t.id),
+			description: (t.description ?? "").trim(),
+			quantity: qty === null ? null : String(qty),
+			unit: (t.unit ?? "").trim(),
+			rate_cents: rate === null ? null : String(Math.round(rate)),
+			amount_cents: amount === null ? (rate === null ? null : String(Math.round(rate))) : String(amount),
+		});
+	}
+	return out;
+}
+
 export function billableItems(ctx, h) {
 	const { T, q, CUSTOMERS, loadSettings } = h;
 
@@ -99,11 +124,14 @@ export function billableItems(ctx, h) {
 							account_name: acct.name,
 							amount_cents: cents.toString(),
 							clearing: own !== null && code === own.code,
+							entry_description: (e.description || "").trim(),
 							// The entry's tags in Ledger, as people read them ("vendor: Hydro One"); not
-							// the customer tag every item has.
+							// the customer tag every item has, nor its rate items (below).
 							tags: [...new Set((e.tags ?? [])
-								.filter((t) => !(t.tag === "customer" && String(t.entity?.id ?? "") === entity))
+								.filter((t) => t.tag !== "rate" && !(t.tag === "customer" && String(t.entity?.id ?? "") === entity))
 								.map((t) => (t.entity?.name ? `${t.tag}: ${t.entity.name}` : t.tag)))].sort(),
+							// Its rate items (tag "rate", Ledger 0.24.0): what was counted, how much, at what rate.
+							rates: rateItems(e.tags),
 						});
 					}
 				}
@@ -131,16 +159,25 @@ export function billableItems(ctx, h) {
 
 	/**
 	 * Checks the journal lines an invoice's lines want to bill: each must be
-	 * a current billable item of this customer in this currency, used once.
-	 * Throws 409 otherwise.
+	 * a current billable item of this customer in this currency, used once,
+	 * except that a cost split into its rate items is on one line per item
+	 * (`rateIds[i]`: the rate item line i was filled from; each line of a
+	 * split cost names a different one). Throws 409 or 422 otherwise. A line
+	 * keeps its item's id even if the item is later changed or taken off in
+	 * Ledger: it only says where the line came from.
 	 */
-	async function check(customerId, currency, lineIdsPerLine, exceptDoc) {
+	async function check(customerId, currency, lineIdsPerLine, exceptDoc, rateIds = []) {
 		const wanted = lineIdsPerLine.flat();
 		if (wanted.length === 0) return;
-		if (new Set(wanted).size !== wanted.length) throw new ctx.HttpError(422, "the same billable item is on two lines");
+		const perId = new Map();
+		lineIdsPerLine.forEach((ids, i) => ids.forEach((id) => perId.set(id, [...(perId.get(id) ?? []), rateIds[i] ?? null])));
+		for (const rates of perId.values()) {
+			if (rates.length < 2) continue;
+			if (rates.some((r) => r === null) || new Set(rates).size !== rates.length) throw new ctx.HttpError(422, "the same billable item is on two lines");
+		}
 		const { items } = await forCustomer(customerId, currency, { exceptDoc });
-		const open = new Set(items.map((i) => i.line_id));
-		const gone = wanted.filter((id) => !open.has(id));
+		const open = new Map(items.map((i) => [i.line_id, i]));
+		const gone = [...perId.keys()].filter((id) => !open.has(id));
 		if (gone.length) throw new ctx.HttpError(409, `${gone.length} billable item${gone.length === 1 ? " is" : "s are"} no longer available for this customer (already invoiced, reversed, or not tagged with them); reload and choose again`);
 	}
 
