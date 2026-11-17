@@ -197,6 +197,9 @@ payments to the books.
   (quoted: quotes/estimates not declined; paid counts an invoice tagged paid
   in full). A project with documents can only be closed, except in root
   mode (`DELETE /root/projects/:id`).
+- Billable items carry their entry's tags (`tags`, labels like "vendor:
+  Hydro One", without the customer's own customer tag); the picker filters
+  by tag and date range in the browser, and adds only shown, ticked items.
 - Billable costs carry Ledger tags: "billed" while an issued invoice bills
   them, and "paid" while that invoice is paid (`documents.paid_entry_ids`,
   `syncBillablePaid()` in `tags.mjs`). Sales only takes off a tag it set

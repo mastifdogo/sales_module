@@ -119,6 +119,10 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.17.1**: **+ Billable items** can be filtered by tag (the entry's tags
+  in Ledger, such as a vendor or "materials", or "No tags") and by a date
+  range; each item shows its tags, and only the items shown and ticked are
+  added.
 - **0.17.0**: projects and paid billable costs.
   - A **Projects** tab: a project belongs to one customer and gathers its
     invoices, quotes and estimates, with what's quoted, invoiced, paid and

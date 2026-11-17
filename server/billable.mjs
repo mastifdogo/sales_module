@@ -99,6 +99,11 @@ export function billableItems(ctx, h) {
 							account_name: acct.name,
 							amount_cents: cents.toString(),
 							clearing: own !== null && code === own.code,
+							// The entry's tags in Ledger, as people read them ("vendor: Hydro One"); not
+							// the customer tag every item has.
+							tags: [...new Set((e.tags ?? [])
+								.filter((t) => !(t.tag === "customer" && String(t.entity?.id ?? "") === entity))
+								.map((t) => (t.entity?.name ? `${t.tag}: ${t.entity.name}` : t.tag)))].sort(),
 						});
 					}
 				}

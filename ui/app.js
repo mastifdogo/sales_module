@@ -598,12 +598,32 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 	const mine = (it) => !projectId || it.project_id === null || String(it.project_id) === String(projectId);
 	const boxes = items.map((it) => h("input", { type: "checkbox", checked: mine(it), "aria-label": `Bill ${it.description || it.date}` }));
 	const total = h("strong");
-	const chosen = () => items.filter((_, i) => boxes[i].checked);
+
+	// Filters: a tag (from Ledger) and a date range. Only what's shown can be added.
+	const tagNames = [...new Set(items.flatMap((it) => it.tags ?? []))].sort();
+	const tagSel = select("tag", "", [["", "Any tag"], ...tagNames.map((t) => [t, t]), ["__none__", "No tags"]], { "aria-label": "Filter by tag" });
+	const dates = items.map((it) => it.date).sort();
+	const from = input("from", "", { type: "date", min: dates[0], max: dates.at(-1), "aria-label": "From date" });
+	const to = input("to", "", { type: "date", min: dates[0], max: dates.at(-1), "aria-label": "To date" });
+	const shown = (it) =>
+		(!tagSel.value || (tagSel.value === "__none__" ? (it.tags ?? []).length === 0 : (it.tags ?? []).includes(tagSel.value))) &&
+		(!from.value || it.date >= from.value) &&
+		(!to.value || it.date <= to.value);
+	const rows = [];
+	const chosen = () => items.filter((it, i) => boxes[i].checked && shown(it));
 	const update = () => {
+		let visible = 0;
+		items.forEach((it, i) => {
+			rows[i].hidden = !shown(it);
+			if (!rows[i].hidden) visible++;
+		});
 		const c = chosen();
-		total.textContent = `${c.length} of ${items.length} selected · ${money(c.reduce((n, i) => n + BigInt(i.amount_cents), 0n), currency)}`;
+		total.textContent = `${c.length} of ${visible} shown selected${visible < items.length ? ` (${items.length - visible} hidden by the filters)` : ""} · ${money(c.reduce((n, i) => n + BigInt(i.amount_cents), 0n), currency)}`;
 		for (const b of buttons) b.disabled = c.length === 0;
+		all.checked = visible > 0 && items.every((it, i) => !shown(it) || boxes[i].checked);
 	};
+	tagSel.onchange = from.onchange = to.onchange = () => update();
+	const clear = h("button", { type: "button", class: "link", onclick: () => ((tagSel.value = ""), (from.value = ""), (to.value = ""), update()) }, "Clear filters");
 	const label = (it) => [it.description || "Billable item", it.date].join(" · ");
 	const buttons = [
 		h("button", {
@@ -626,11 +646,19 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 			},
 		}, "Add each as its own line"),
 	];
-	const all = h("input", { type: "checkbox", checked: true, "aria-label": "Select all", onchange: (e) => (boxes.forEach((b) => (b.checked = e.target.checked)), update()) });
+	const all = h("input", { type: "checkbox", checked: true, "aria-label": "Select all shown", onchange: (e) => (items.forEach((it, i) => shown(it) && (boxes[i].checked = e.target.checked)), update()) });
 	for (const b of boxes) b.onchange = update;
 	body.replaceChildren(
 		...notes,
 		h("p", { class: "hint" }, "Costs posted in Ledger and tagged with this customer, not invoiced yet. Items from the clearing account are taken back out of it when the invoice is posted."),
+		h(
+			"div",
+			{ class: "filters" },
+			tagNames.length ? field("Tag", tagSel) : null,
+			field("From", from),
+			field("To", to),
+			h("div", { style: "align-self:end" }, clear),
+		),
 		scroll(
 			h(
 				"table",
@@ -640,14 +668,20 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 					"tbody",
 					{},
 					items.map((it, i) =>
-						h(
+						(rows[i] = h(
 							"tr",
 							{},
 							h("td", {}, boxes[i]),
 							h("td", {}, it.date),
-							h("td", {}, it.description || "(no description)", h("div", { class: "muted" }, `${it.account_code} ${it.account_name}${it.reference ? ` · ref ${it.reference}` : ""}${it.project_name ? ` · project ${it.project_name}` : ""}`)),
+							h(
+								"td",
+								{},
+								it.description || "(no description)",
+								h("div", { class: "muted" }, `${it.account_code} ${it.account_name}${it.reference ? ` · ref ${it.reference}` : ""}${it.project_name ? ` · project ${it.project_name}` : ""}`),
+								(it.tags ?? []).length ? h("div", {}, it.tags.map((t) => h("span", { class: "badge draft", style: "margin-right:0.25rem" }, t))) : null,
+							),
 							h("td", { class: "num" }, money(it.amount_cents, currency)),
-						),
+						)),
 					),
 				),
 			),
