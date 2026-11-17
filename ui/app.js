@@ -110,6 +110,8 @@ function badge(doc) {
 	if (doc.overdue) s = "overdue";
 	else if (doc.expired) s = "expired";
 	else if (s === "posting") s = "draft";
+	// Its entry is tagged "paid" in Ledger by a person or another module; Sales has no payment for it.
+	if (doc.kind === "invoice" && doc.status === "open" && doc.paid_by_tag) return h("span", { class: "badge paid", title: "This invoice's journal entry is tagged paid in Ledger. No payment is recorded in Sales; take the tag off in Ledger to open it again." }, "paid (tagged in Ledger)");
 	return h("span", { class: `badge ${s}` }, s);
 }
 
@@ -769,6 +771,7 @@ async function docView(kind, id) {
 		doc.sent_at ? ["Last emailed", when(doc.sent_at)] : null,
 		doc.decided_at && !isInvoice ? ["Decided", when(doc.decided_at)] : null,
 		doc.journal_entry_id ? ["In the books", ledgerLink(doc.journal_entry_id, `Journal entry #${doc.journal_entry_id}`)] : null,
+		doc.paid_by_tag ? ["Paid", "Tagged paid on its journal entry in Ledger. No payment is recorded in Sales; take the tag off there to open it again."] : null,
 		doc.void_entry_id ? ["Voided by", ledgerLink(doc.void_entry_id, `Journal entry #${doc.void_entry_id}`)] : null,
 		["Created by", doc.created_by],
 	].filter(Boolean);
@@ -1219,7 +1222,7 @@ async function customerView(id) {
 		["Outstanding", outstandingText(c.outstanding)],
 	].filter(([, v]) => v);
 	const openInvoices = c.documents
-		.filter((d) => d.kind === "invoice" && d.status === "open")
+		.filter((d) => d.kind === "invoice" && d.status === "open" && !d.paid_by_tag)
 		.map((d) => ({ ...d, balance_cents: BigInt(d.total_cents) - BigInt(d.paid_cents) }))
 		.sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0));
 

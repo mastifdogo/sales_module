@@ -16,10 +16,13 @@ import { paymentRoutes } from "./server/payments.mjs";
 import { rootRoutes } from "./server/root.mjs";
 import { searchProvider } from "./server/search.mjs";
 import { settingsRoutes } from "./server/settings.mjs";
+import { entryTags } from "./server/tags.mjs";
 
 export default async function register(ctx) {
 	const h = helpers(ctx);
-	const dashboard = dashboardSync(ctx, h);
+	// Ledger's shared tags on journal entries (Ledger ≥ 0.23.0); does nothing on an older one.
+	const tags = entryTags(ctx, h);
+	const dashboard = dashboardSync(ctx, h, tags);
 	// Every successful change (anything but GET) refreshes the dashboard items.
 	const routes = Object.create(ctx);
 	routes.route = (method, path, handler) =>
@@ -34,7 +37,7 @@ export default async function register(ctx) {
 	documentSettingsRoutes(routes, h);
 	catalogRoutes(routes, h);
 	const customers = customerRoutes(routes, h);
-	const docs = documentRoutes(routes, h, mail);
+	const docs = documentRoutes(routes, h, mail, tags);
 	paymentRoutes(routes, h, docs);
 	rootRoutes(routes, h);
 	importRoutes(routes, h, dashboard, customers);
@@ -48,6 +51,9 @@ export default async function register(ctx) {
 		await docs.makeClearingAccounts(org);
 		await docs.recover(org);
 	});
+	// An invoice tagged paid (or no longer) by a person or another module: its lists and reminders follow.
+	tags.listen((org) => dashboard.schedule(org?.id));
+	// The first sync also tags the invoices issued before the tags existed.
 	dashboard.start();
 	ctx.log.info("sales module ready", { dashboard: Boolean(ctx.dashboard) });
 }

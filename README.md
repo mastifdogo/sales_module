@@ -117,6 +117,18 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.16.0**: Ledger's shared tags (Ledger 0.23.0). Each issued invoice's
+  journal entry is tagged with its **customer** and **billed**, then
+  **paid** when it is paid in full and **overdue** while it is past due
+  and unpaid; removing a payment or voiding the invoice takes them off
+  again. Billable costs added to an invoice get **billed** on their own
+  entries. If a person or another module tags an invoice's entry **paid**
+  in Ledger, Sales shows the invoice as *paid (tagged in Ledger)* and
+  leaves it out of the open and overdue lists, without recording a
+  payment or posting anything; taking the tag off opens it again.
+  Invoices issued before this update are tagged the first time Sales
+  starts. On a Ledger older than 0.23.0 Sales works as before, without
+  tags.
 - **0.15.0**: root mode (Ledger 0.21.1). While an admin has root mode on,
   invoices, quotes, estimates, payments and customers show red **Root**
   controls to delete them, or change a document's status, whatever its
@@ -253,6 +265,19 @@ secret field in Ledger's form and is never sent back to the browser.
 - **Invoices**: *Save draft* keeps it editable. *Save & issue* locks it and
   posts it when posting is on. *Email* sends the PDF; emailing a draft issues
   it first. Use *Record payment* for payments and *Void* to cancel.
+- **Tags in Ledger** (Ledger 0.23.0 or newer, with posting on): the journal
+  entry of an issued invoice carries Ledger's shared tags, which every
+  module and the journal read the same way: **customer** (who it is with),
+  **billed**, **paid** once it is paid in full, **overdue** while it is
+  past due and unpaid. Sales keeps them in step with the invoice, hourly
+  and after every change, and tags the entries of billable costs **billed**
+  while an invoice bills them. A tag is the entry's, not Sales': when
+  someone else tags an invoice's entry **paid**, the invoice shows as
+  *paid (tagged in Ledger)* and drops out of the open and overdue lists
+  and the overdue reminder, with no payment recorded and nothing posted;
+  remove the tag in Ledger, or record the real payment in Sales, to change
+  that. An invoice that Sales holds payments for in full stays paid, and
+  gets its **paid** tag back if someone removes it.
 - **Quotes and estimates**: *Email* (or *Mark as sent*), then *Accepted* or
   *Declined*. *Convert to invoice* creates a draft invoice with the same
   lines and tax rates, linked both ways. Sent quotes stay editable until

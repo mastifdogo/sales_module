@@ -169,6 +169,24 @@ payments to the books.
   reverses it. `GET /customers/:id/billable?currency=&invoice=` lists them;
   saving an invoice re-checks every billed id (409 if taken). Duplicating
   or converting never copies billed ids.
+- Shared tags (Ledger 0.23.0, feature-detected: `if (ctx.tags)`, the
+  manifest still asks for 0.21.1): `server/tags.mjs`. `tags.sync(did?)`
+  compares, in SQL, what each issued invoice's entry should carry
+  (`customer:<entity id>`, `billed`, `paid`, `overdue`; void: only the
+  customer) with `documents.entry_tags` (what Sales knows to be on it) and
+  calls `ctx.tags.set` / `remove` only for the difference; it runs for one
+  invoice right after issue, payment, payment removal and void, and for
+  all of them in the dashboard sync (startup, hourly, after any change),
+  which is also the backfill. Billable items: `documents.billed_entry_ids`
+  (NULL = not worked out) holds the source entries tagged `billed`; void
+  removes the tag unless another issued invoice bills the same entry.
+  `tags.listen()` follows `ctx.tags.onChange` (not Sales' own changes):
+  "paid" set on an open invoice's entry sets `documents.paid_by_tag`
+  (status stays `open`, no payment, nothing posted; shown as "paid (tagged
+  in Ledger)" and left out of open/overdue lists, totals, reminders and
+  payment matching), removed clears it. Every query that means "owed"
+  says `status = 'open' AND NOT paid_by_tag`. Never post in reaction to a
+  tag. Root deletes don't touch tags.
 - Root mode (Ledger 0.21.1): `server/root.mjs`. With `req.user.root`,
   `DELETE /root/documents/:id`, `PATCH /root/documents/:id` (listed columns
   only), `DELETE /root/payments/:id` (and the invoice's paid_cents/status

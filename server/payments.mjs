@@ -16,7 +16,7 @@ export function paymentRoutes(ctx, h, docs) {
 			`SELECT d.id, d.number, d.currency, d.total_cents - d.paid_cents AS balance_cents, d.issue_date::text, d.due_date::text,
 			        d.po_number, d.journal_entry_id, d.customer_id, c.name AS customer, c.company
 			   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
-			  WHERE d.kind = 'invoice' AND d.status = 'open' AND ($1::bigint IS NULL OR d.customer_id = $1::bigint)
+			  WHERE d.kind = 'invoice' AND d.status = 'open' AND NOT d.paid_by_tag AND ($1::bigint IS NULL OR d.customer_id = $1::bigint)
 			  ORDER BY d.due_date, d.issue_date, d.id
 			  LIMIT 500`,
 			[customerId],
@@ -273,7 +273,7 @@ export function paymentRoutes(ctx, h, docs) {
 		const invs = ids.length
 			? (
 					await q(
-						`SELECT d.id, d.number, d.status, d.customer_id, d.total_cents - d.paid_cents AS balance_cents, c.name AS customer
+						`SELECT d.id, d.number, CASE WHEN d.status = 'open' AND d.paid_by_tag THEN 'paid' ELSE d.status END AS status, d.customer_id, d.total_cents - d.paid_cents AS balance_cents, c.name AS customer
 						   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id WHERE d.id = ANY($1::bigint[])`,
 						[ids],
 					)

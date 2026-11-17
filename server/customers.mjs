@@ -45,7 +45,7 @@ export function customerRoutes(ctx, h) {
 	const OUTSTANDING = (alias) => `(
 		SELECT coalesce(jsonb_agg(jsonb_build_object('currency', currency, 'cents', due) ORDER BY currency), '[]')
 		  FROM (SELECT currency, sum(total_cents - paid_cents) AS due FROM ${T("documents")}
-		         WHERE customer_id = ${alias}.id AND kind = 'invoice' AND status = 'open' GROUP BY currency) x) AS outstanding`;
+		         WHERE customer_id = ${alias}.id AND kind = 'invoice' AND status = 'open' AND NOT paid_by_tag GROUP BY currency) x) AS outstanding`;
 
 	async function getCustomer(cid) {
 		const { rows } = await q(`SELECT c.*, ${OUTSTANDING("c")} FROM ${CUSTOMERS} c WHERE c.id = $1`, [cid]);
@@ -93,12 +93,12 @@ export function customerRoutes(ctx, h) {
 	ctx.route("GET", "/customers/:id", async (req) => {
 		const c = await getCustomer(id(req, "id", "customer"));
 		const { rows } = await q(
-			`SELECT id, kind, number, status, issue_date::text, due_date::text, currency, total_cents, paid_cents, sent_at
+			`SELECT id, kind, number, status, issue_date::text, due_date::text, currency, total_cents, paid_cents, sent_at, status = 'open' AND paid_by_tag AS paid_by_tag
 			   FROM ${T("documents")} WHERE customer_id = $1 ORDER BY issue_date DESC, id DESC`,
 			[c.id],
 		);
 		const t = today();
-		const docs = rows.map((d) => ({ ...d, overdue: d.kind === "invoice" && d.status === "open" && d.due_date < t, expired: d.kind !== "invoice" && ["draft", "sent"].includes(d.status) && d.due_date < t }));
+		const docs = rows.map((d) => ({ ...d, overdue: d.kind === "invoice" && d.status === "open" && !d.paid_by_tag && d.due_date < t, expired: d.kind !== "invoice" && ["draft", "sent"].includes(d.status) && d.due_date < t }));
 		const payments = await q(
 			`SELECT p.id, p.document_id, d.number AS invoice_number, d.currency, p.payment_date::text, p.amount_cents, p.method, p.reference,
 			        p.journal_entry_id, p.matched_entry_id

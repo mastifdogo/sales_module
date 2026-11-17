@@ -31,7 +31,7 @@ const COLUMN_TYPES = {
 };
 const OPEN_QUOTE = ["draft", "sent"];
 
-export function documentRoutes(ctx, h, mail) {
+export function documentRoutes(ctx, h, mail, tags) {
 	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings, CUSTOMERS, TAX_ACCOUNTS, CATEGORY_ACCOUNTS } = h;
 	const billable = billableItems(ctx, h);
 
@@ -205,7 +205,9 @@ export function documentRoutes(ctx, h, mail) {
 		doc.taxes = computeTotals(doc.lines).taxes;
 		doc.balance_cents = doc.kind !== "invoice" || doc.status === "void" ? 0n : BigInt(doc.total_cents) - BigInt(doc.paid_cents);
 		const t = today();
-		doc.overdue = doc.kind === "invoice" && doc.status === "open" && doc.due_date < t;
+		// Its entry was tagged "paid" in Ledger by someone else: paid, as far as lists and reminders go.
+		doc.paid_by_tag = doc.kind === "invoice" && doc.status === "open" && doc.paid_by_tag === true;
+		doc.overdue = doc.kind === "invoice" && doc.status === "open" && !doc.paid_by_tag && doc.due_date < t;
 		doc.expired = doc.kind !== "invoice" && OPEN_QUOTE.includes(doc.status) && doc.due_date < t;
 		doc.entry_changes = await entryChanges(doc);
 		// Its PDF in Ledger's Documents, if it's (still) there: a restore or a
@@ -222,9 +224,9 @@ export function documentRoutes(ctx, h, mail) {
 		invoice: {
 			"": "true",
 			draft: "d.status IN ('draft', 'posting')",
-			open: "d.status = 'open'",
-			overdue: "d.status = 'open' AND d.due_date < $4::date",
-			paid: "d.status = 'paid'",
+			open: "d.status = 'open' AND NOT d.paid_by_tag",
+			overdue: "d.status = 'open' AND NOT d.paid_by_tag AND d.due_date < $4::date",
+			paid: "(d.status = 'paid' OR (d.status = 'open' AND d.paid_by_tag))",
 			void: "d.status = 'void'",
 		},
 		quote: {
@@ -401,6 +403,8 @@ export function documentRoutes(ctx, h, mail) {
 			throw e;
 		}
 		ctx.log.info("invoice issued", { document: did, entry: entryId, user: user.username });
+		// Ledger's shared tags: customer and billed on its entry, billed on the costs it bills.
+		await tags.sync(did, user);
 		const issued = await getDocument(did);
 		await filePdf(issued, renderDocumentPdf(issued, s), user);
 		return getDocument(did);
@@ -455,7 +459,8 @@ export function documentRoutes(ctx, h, mail) {
 			`WITH doc AS (
 				UPDATE ${T("documents")}
 				   SET paid_cents = paid_cents + $2::bigint, updated_at = now(),
-				       status = CASE WHEN paid_cents + $2::bigint >= total_cents THEN 'paid' ELSE status END
+				       status = CASE WHEN paid_cents + $2::bigint >= total_cents THEN 'paid' ELSE status END,
+				       paid_by_tag = CASE WHEN paid_cents + $2::bigint >= total_cents THEN false ELSE paid_by_tag END
 				 WHERE id = $1 AND kind = 'invoice' AND status = 'open' AND paid_cents + $2::bigint <= total_cents
 				RETURNING id
 			)
@@ -479,6 +484,8 @@ export function documentRoutes(ctx, h, mail) {
 		}
 		// A deposit already in the books that this payment uses: link it to the invoice too.
 		if (!lines && matched) await linkEntry(matched.entry_id, invoiceLink(before, "Payment on invoice"), user);
+		// Paid in full: the invoice's entry is tagged "paid" (which takes "overdue" off).
+		await tags.sync(did, user);
 		return pid;
 	}
 
@@ -501,6 +508,8 @@ export function documentRoutes(ctx, h, mail) {
 		if (p.journal_entry_id === null && p.matched_entry_id != null && !doc.payments.some((x) => x.id !== p.id && String(x.matched_entry_id) === String(p.matched_entry_id))) {
 			await ctx.ledger.unlinkJournalEntry(p.matched_entry_id, `invoice:${doc.id}`).catch((e) => ctx.log.warn("could not unlink journal entry", { error: e.message }));
 		}
+		// Open again: "paid" comes off the invoice's entry.
+		await tags.sync(did, user);
 	}
 
 	// ---- PDF and email ----------------------------------------------------------------------
@@ -577,7 +586,7 @@ ${paras}
 			if (!where) throw bad(`status must be one of: ${Object.keys(LIST_FILTERS[kind]).filter(Boolean).join(", ")}`);
 			const { rows } = await q(
 				`SELECT d.id, d.kind, d.number, d.status, d.issue_date::text, d.due_date::text, d.currency, d.total_cents, d.paid_cents,
-				        d.sent_at, d.customer_id, c.name AS customer_name, c.company AS customer_company
+				        d.sent_at, d.customer_id, d.status = 'open' AND d.paid_by_tag AS paid_by_tag, c.name AS customer_name, c.company AS customer_company
 				   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
 				  WHERE d.kind = $5 AND ${where}
 				    AND ($1 = '' OR d.number ILIKE $2 OR c.name ILIKE $2 OR c.company ILIKE $2 OR d.po_number ILIKE $2)
@@ -591,7 +600,7 @@ ${paras}
 			return {
 				data: rows.map((d) => ({
 					...d,
-					overdue: isInvoice && d.status === "open" && d.due_date < t,
+					overdue: isInvoice && d.status === "open" && !d.paid_by_tag && d.due_date < t,
 					expired: !isInvoice && OPEN_QUOTE.includes(d.status) && d.due_date < t,
 				})),
 			};
@@ -758,6 +767,10 @@ ${paras}
 					throw e;
 				}
 			}
+			// Void: nothing is owed on it, whatever its entry was tagged; billed, paid and
+			// overdue come off the entry, and billed off the costs it billed.
+			await q(`UPDATE ${T("documents")} SET paid_by_tag = false WHERE id = $1 AND status = 'void'`, [did]);
+			await tags.sync(did, req.user);
 			const doc = await getDocument(did);
 			if (voidEntry !== null) await linkEntry(voidEntry, invoiceLink(doc, "Void invoice"), req.user);
 			return doc;

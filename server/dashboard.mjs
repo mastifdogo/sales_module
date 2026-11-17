@@ -17,9 +17,9 @@ import { openLink } from "./search.mjs";
 const MAX_ITEMS = 50;
 const HOURLY = 60 * 60 * 1000;
 
-export function dashboardSync(ctx, h) {
+export function dashboardSync(ctx, h, tags) {
 	const d = ctx.dashboard;
-	if (!d) return { schedule() {}, start() {} };
+	if (!d && !tags.enabled) return { schedule() {}, start() {} };
 	const { T, q, CUSTOMERS } = h;
 	let timer = null;
 	let running = null;
@@ -86,7 +86,7 @@ export function dashboardSync(ctx, h) {
 		const { rows } = await q(
 			`SELECT d.number, d.currency, d.total_cents - d.paid_cents AS due_cents, d.due_date::text, c.name AS customer
 			   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
-			  WHERE d.kind = 'invoice' AND d.status = 'open' AND d.due_date < $1::date
+			  WHERE d.kind = 'invoice' AND d.status = 'open' AND NOT d.paid_by_tag AND d.due_date < $1::date
 			  ORDER BY d.due_date, d.id`,
 			[today()],
 		);
@@ -128,6 +128,10 @@ export function dashboardSync(ctx, h) {
 
 	/** One organization's items (or the only books, before organizations). */
 	async function sync(org) {
+		// Ledger's shared tags follow the same clock: an invoice past due gets "overdue"
+		// here, and invoices from before the tags get theirs on the first run.
+		await tags.sync();
+		if (!d) return;
 		try {
 			await syncOverdue();
 			await syncTodos();

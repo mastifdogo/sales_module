@@ -74,10 +74,10 @@ export function settingsRoutes(ctx, h, mail) {
 		const t = today();
 		const { rows } = await q(
 			`SELECT currency,
-			        coalesce(sum(total_cents - paid_cents) FILTER (WHERE status = 'open'), 0)::bigint AS outstanding_cents,
-			        coalesce(sum(total_cents - paid_cents) FILTER (WHERE status = 'open' AND due_date < $1::date), 0)::bigint AS overdue_cents,
-			        count(*) FILTER (WHERE status = 'open') AS open_count,
-			        count(*) FILTER (WHERE status = 'open' AND due_date < $1::date) AS overdue_count,
+			        coalesce(sum(total_cents - paid_cents) FILTER (WHERE status = 'open' AND NOT paid_by_tag), 0)::bigint AS outstanding_cents,
+			        coalesce(sum(total_cents - paid_cents) FILTER (WHERE status = 'open' AND NOT paid_by_tag AND due_date < $1::date), 0)::bigint AS overdue_cents,
+			        count(*) FILTER (WHERE status = 'open' AND NOT paid_by_tag) AS open_count,
+			        count(*) FILTER (WHERE status = 'open' AND NOT paid_by_tag AND due_date < $1::date) AS overdue_count,
 			        coalesce((SELECT sum(p.amount_cents) FROM ${T("payments")} p JOIN ${T("documents")} pd ON pd.id = p.document_id
 			                   WHERE pd.currency = d.currency AND p.payment_date > $1::date - 30), 0)::bigint AS paid_30d_cents
 			   FROM ${T("documents")} d WHERE kind = 'invoice' GROUP BY currency ORDER BY currency`,
