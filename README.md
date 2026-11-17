@@ -117,6 +117,9 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.16.1:** Voiding an invoice only takes the "billed" tag off a billable cost's entry if Sales
+  set it. A tag set by the module that posted the cost (Employees, for hours) stays, so voiding an
+  invoice no longer undoes that module's own billing.
 - **0.16.0**: Ledger's shared tags (Ledger 0.23.0). Each issued invoice's
   journal entry is tagged with its **customer** and **billed**, then
   **paid** when it is paid in full and **overdue** while it is past due

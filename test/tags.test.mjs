@@ -7,7 +7,7 @@ import { test } from "node:test";
 import register from "../server.mjs";
 
 /** A stand-in for Ledger's ctx; `rowsFor(sql, params)` answers the queries a test cares about. */
-function fakeCtx({ rowsFor = () => null, tags = true, extra = {} } = {}) {
+function fakeCtx({ rowsFor = () => null, tags = true, extra = {}, tagsOf = null } = {}) {
 	const routes = [];
 	const logs = [];
 	const queries = [];
@@ -42,7 +42,7 @@ function fakeCtx({ rowsFor = () => null, tags = true, extra = {} } = {}) {
 						standard: ["paid", "billed", "overdue", "customer", "vendor"],
 						set: async (entryId, tag, opts = {}) => (calls.push(["set", String(entryId), tag, opts]), []),
 						remove: async (entryId, tag, opts = {}) => (calls.push(["remove", String(entryId), tag, opts]), []),
-						of: async () => [],
+						of: async (entryId) => (tagsOf ? tagsOf(String(entryId)) : []),
 						entries: async () => [],
 						onChange: (fn) => listeners.push(fn),
 					},
@@ -154,6 +154,8 @@ test("an entry that can't be tagged doesn't stop the others, and is tried again 
 
 test("billable costs: their entries are tagged billed when the invoice is issued, and freed when it is void", async () => {
 	const { ctx, calls, queries } = fakeCtx({
+		// Sales only takes off a "billed" tag it set itself.
+		tagsOf: (entry) => [{ tag: "billed", module_id: entry === "82" ? "employees" : "sales" }],
 		extra: {
 			ledger: {
 				clearingAccount: async () => ({ code: "1150", name: "Billable costs to recharge" }),
@@ -168,8 +170,8 @@ test("billable costs: their entries are tagged billed when the invoice is issued
 			// An issued invoice bills journal line 700; nothing worked out for it yet.
 			if (sql.includes("AS line_ids")) return [{ id: 8n, number: "INV-0008", customer_id: 3n, currency: "CAD", line_ids: ["700"] }];
 			if (sql.includes("c WHERE id = $1")) return [{ id: 3n, entity_id: 5n, currency: "CAD" }];
-			// A void invoice had tagged entries 80 and 81; another issued invoice still bills 81.
-			if (sql.includes("d.status = 'void' AND cardinality(d.billed_entry_ids) > 0")) return [{ id: 9n, number: "INV-0009", entries: ["80", "81"] }];
+			// A void invoice had tagged entries 80, 81 and 82; another issued invoice still bills 81, and 82 was tagged billed by Employees.
+			if (sql.includes("d.status = 'void' AND cardinality(d.billed_entry_ids) > 0")) return [{ id: 9n, number: "INV-0009", entries: ["80", "81", "82"] }];
 			if (sql.includes("= ANY(billed_entry_ids)")) return params[0] === "81" ? [{ "?column?": 1 }] : [];
 			return null;
 		},

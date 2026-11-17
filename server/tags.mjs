@@ -129,7 +129,9 @@ export function entryTags(ctx, h) {
 			try {
 				for (const entry of r.entries) {
 					const held = await q(`SELECT 1 FROM ${T("documents")} WHERE kind = 'invoice' AND status IN ('open', 'paid') AND $1::bigint = ANY(billed_entry_ids) LIMIT 1`, [entry]);
-					if (held.rows.length === 0) await tags.remove(entry, "billed");
+					// Only a tag Sales set itself: the module that posted the cost (e.g. Employees, for hours) may have
+					// tagged it billed first, and that tag is its own to take off.
+					if (held.rows.length === 0 && (await tags.of(entry)).some((t) => t.tag === "billed" && t.module_id === ctx.id)) await tags.remove(entry, "billed");
 				}
 				await q(`UPDATE ${T("documents")} SET billed_entry_ids = '{}' WHERE id = $1`, [String(r.id)]);
 			} catch (e) {
