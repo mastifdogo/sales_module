@@ -16,18 +16,33 @@
 // tagged "paid" elsewhere is shown as paid (documents.paid_by_tag), without a
 // payment and without posting anything; taking the tag off opens it again.
 // On a Ledger without ctx.tags none of this runs.
+//
+// The same goes for the tags on files (Ledger ≥ 0.27.0, ctx.documents.tags):
+// the PDF of an invoice that Sales filed in Ledger's Documents carries
+// "billed", "paid" and "overdue" exactly as its entry does (who it is with is
+// the document's entity, not a tag), an invoice without an entry too.
+// documents.file_tags holds what Sales knows to be on the file, and a person
+// tagging the PDF "paid" on the Documents page is followed like a tag on the
+// entry. What the file says is kept with it as well (its extraction, saved
+// when the PDF is filed): the sync keeps the status in it current, and saves
+// it for invoices filed before Sales did so.
 
 import { today } from "../lib/money.mjs";
 import { billableItems } from "./billable.mjs";
+import { isNotFound } from "./common.mjs";
 
 const FOLLOWED = ["customer", "billed", "paid", "overdue"];
+const FILE_FOLLOWED = ["billed", "paid", "overdue"];
 const BATCH = 500;
 const MAX_PER_SYNC = 2000;
 
 export function entryTags(ctx, h) {
-	const tags = ctx.tags;
-	if (!tags) return { enabled: false, async sync() {}, listen() {} };
+	const tags = ctx.tags ?? null;
+	const fileTags = ctx.documents?.tags ?? null;
+	if (!tags && !fileTags) return { enabled: false, async sync() {}, async syncFiles() {}, listen() {}, saveFileDataWith() {} };
 	const { T, q } = h;
+	// Saves everything Sales knows about a document with its filed PDF (set by documents.mjs).
+	let saveFileData = null;
 	const billable = billableItems(ctx, h);
 	const warned = new Set();
 	const warnOnce = (key, msg, data) => {
@@ -178,6 +193,144 @@ export function entryTags(ctx, h) {
 		}
 	}
 
+	// ---- the filed PDFs (Ledger's Documents) -------------------------------------------------
+
+	/** Invoices whose filed PDF should carry other tags than Sales knows it to. */
+	async function filesOutOfLine(did, after) {
+		const { rows } = await q(
+			`SELECT * FROM (
+				SELECT d.id, d.number, d.pdf_document_id, d.file_tags,
+				       array_remove(ARRAY[
+				           CASE WHEN d.status IN ('open', 'paid') THEN 'billed' END,
+				           CASE WHEN d.status = 'paid' OR (d.status = 'open' AND d.paid_by_tag) THEN 'paid' END,
+				           CASE WHEN d.status = 'open' AND NOT d.paid_by_tag AND d.due_date < $1::date THEN 'overdue' END
+				       ], NULL) AS file_wanted
+				  FROM ${T("documents")} d
+				 WHERE d.kind = 'invoice' AND d.pdf_document_id IS NOT NULL
+				   AND ($2::bigint IS NULL OR d.id = $2::bigint) AND d.id > $3::bigint
+			) x
+			WHERE NOT (x.file_wanted @> x.file_tags AND x.file_tags @> x.file_wanted)
+			ORDER BY x.id LIMIT ${BATCH}`,
+			[today(), did, after],
+		);
+		return rows;
+	}
+
+	/** The PDF was deleted from Ledger's Documents: Sales' pointer to it leads nowhere, so it goes. */
+	const forgetFile = (id, file) => q(`UPDATE ${T("documents")} SET pdf_document_id = NULL, file_tags = '{}', file_data_status = NULL WHERE id = $1 AND pdf_document_id = $2::bigint`, [String(id), String(file)]);
+
+	async function bringFileInLine(r, user) {
+		const file = Number(r.pdf_document_id);
+		const note = { note: `Invoice ${r.number}`.slice(0, 200) };
+		try {
+			// Off first, then on ("paid" takes "overdue" off by itself).
+			for (const tag of r.file_tags) if (!r.file_wanted.includes(tag)) await fileTags.remove(file, tag);
+			for (const tag of r.file_wanted) if (!r.file_tags.includes(tag)) await fileTags.set(file, tag, note, user);
+			await q(`UPDATE ${T("documents")} SET file_tags = $2::text[] WHERE id = $1 AND pdf_document_id = $3::bigint`, [String(r.id), r.file_wanted, String(file)]);
+		} catch (e) {
+			if (isNotFound(e)) return void (await forgetFile(r.id, file));
+			warnOnce(`file:${r.id}`, "could not tag an invoice's PDF in Ledger's documents", { invoice: r.number, document: file, err: e.message });
+		}
+	}
+
+	/**
+	 * Keeps what is saved with each filed PDF (its extraction) true: the
+	 * status in it follows the document's, and an issued invoice whose PDF was
+	 * filed before Sales saved any (or whose data someone cleared) gets it now.
+	 * An issued invoice doesn't change, so it still says what its PDF says; a
+	 * quote or estimate may have been edited since it was filed, so its data
+	 * is only saved when it is filed (emailed) again.
+	 */
+	async function syncFileData(did, user) {
+		if (!ctx.documents?.setExtracted) return;
+		const { rows } = await q(
+			`SELECT d.id, d.kind, d.number, d.status, d.pdf_document_id, d.file_data_status
+			   FROM ${T("documents")} d
+			  WHERE d.pdf_document_id IS NOT NULL AND d.status <> 'posting' AND ($1::bigint IS NULL OR d.id = $1::bigint)
+			    AND ((d.file_data_status IS NULL AND d.kind = 'invoice' AND d.status IN ('open', 'paid', 'void'))
+			      OR (d.file_data_status IS NOT NULL AND d.file_data_status <> d.status))
+			  ORDER BY d.id LIMIT ${MAX_PER_SYNC}`,
+			[did],
+		);
+		for (const r of rows) {
+			const file = Number(r.pdf_document_id);
+			try {
+				if (r.file_data_status === null) {
+					if (saveFileData) await saveFileData(String(r.id), user);
+					continue;
+				}
+				// Only the status: the rest still describes the PDF as it was filed.
+				await ctx.documents.setExtracted(file, { data: { sales: { id: Number(r.id), kind: r.kind, status: r.status } } }, user);
+				await q(`UPDATE ${T("documents")} SET file_data_status = $2 WHERE id = $1 AND pdf_document_id = $3::bigint`, [String(r.id), r.status, String(file)]);
+			} catch (e) {
+				if (isNotFound(e)) await forgetFile(r.id, file).catch(() => {});
+				else warnOnce(`filedata:${r.id}`, "could not save a document's data with its PDF in Ledger's documents", { number: r.number, document: file, err: e.message });
+			}
+		}
+	}
+
+	/** Brings the tags and the saved data of the filed PDFs in line (one document, or all in these books). Never throws. */
+	async function syncFiles(did = null, user = undefined) {
+		if (!fileTags) return;
+		const one = did === null || did === undefined ? null : String(did);
+		try {
+			for (let after = "0"; ; ) {
+				const rows = await filesOutOfLine(one, after);
+				for (const r of rows) await bringFileInLine(r, user);
+				if (rows.length < BATCH) break;
+				after = String(rows.at(-1).id);
+			}
+			await syncFileData(one, user);
+		} catch (e) {
+			ctx.log.warn("could not sync the tags on the PDFs in Ledger's documents", { err: e.message });
+		}
+	}
+
+	// ---- following what others tag ---------------------------------------------------------
+
+	/** The organization this code runs in: Ledger calls a listener inside the one that changed. */
+	const here = async () => {
+		try {
+			return await ctx.orgs.current();
+		} catch {
+			return null;
+		}
+	};
+
+	/**
+	 * A person or another module set or took off a tag on an invoice's entry
+	 * (`idColumn` "journal_entry_id", remembered in "entry_tags") or on its
+	 * filed PDF ("pdf_document_id", "file_tags"). Remembers it, and "paid" on
+	 * an open invoice makes it paid by tag (or open again). Runs in the books
+	 * the change was made in, and only there: entry and document ids mean
+	 * something else in every other organization.
+	 */
+	async function follow(idColumn, tagsColumn, value, key, set, by, changed) {
+		const { rows } = await q(
+			`WITH old AS (
+				SELECT id, paid_by_tag AS was FROM ${T("documents")}
+				 WHERE kind = 'invoice' AND ${idColumn} = $1::bigint AND status IN ('open', 'paid') FOR UPDATE
+			)
+			UPDATE ${T("documents")} d
+			   SET ${tagsColumn} = CASE WHEN $3::boolean THEN array_append(array_remove(d.${tagsColumn}, $2::text), $2::text) ELSE array_remove(d.${tagsColumn}, $2::text) END,
+			       paid_by_tag = CASE WHEN $2::text = 'paid' AND d.status = 'open' THEN $3::boolean ELSE d.paid_by_tag END,
+			       updated_at = now()
+			  FROM old WHERE d.id = old.id
+			RETURNING d.id, d.number, d.status, d.paid_by_tag, old.was`,
+			[String(value), key, set],
+		);
+		const on = idColumn === "journal_entry_id" ? "its entry" : "its PDF";
+		for (const r of rows) {
+			if (r.paid_by_tag !== r.was) {
+				ctx.log.info(r.paid_by_tag ? "invoice tagged paid in Ledger; shown as paid" : "paid tag taken off in Ledger; invoice is open again", { invoice: r.number, on, by: by ?? "a person" });
+				changed(await here());
+			} else if (key === "paid" && !set && r.status === "paid") {
+				// Sales holds the payments: it stays paid, and the next sync puts the tag back.
+				ctx.log.info("paid tag taken off in Ledger, but Sales has this invoice's payments; it stays paid", { invoice: r.number, on, by: by ?? "a person" });
+			}
+		}
+	}
+
 	return {
 		enabled: true,
 		/**
@@ -187,12 +340,21 @@ export function entryTags(ctx, h) {
 		 */
 		async sync(did = null, user = undefined) {
 			const one = did === null || did === undefined ? null : String(did);
-			try {
-				await syncInvoices(one, user);
-				await syncBillable(one, user);
-			} catch (e) {
-				ctx.log.warn("could not sync Ledger's tags", { err: e.message });
+			if (tags) {
+				try {
+					await syncInvoices(one, user);
+					await syncBillable(one, user);
+				} catch (e) {
+					ctx.log.warn("could not sync Ledger's tags", { err: e.message });
+				}
 			}
+			await syncFiles(one, user);
+		},
+		/** The filed PDFs only: their tags and saved data (right after a PDF is filed). Never throws. */
+		syncFiles,
+		/** documents.mjs hands over how a document's data is saved with its PDF: fn(documentId, user). */
+		saveFileDataWith(fn) {
+			saveFileData = fn;
 		},
 		/**
 		 * Follows tags that a person or another module changes on an invoice's
@@ -200,35 +362,22 @@ export function entryTags(ctx, h) {
 		 * again because of it. Nothing is ever posted here.
 		 */
 		listen(changed = () => {}) {
-			tags.onChange(async (c) => {
+			// Ledger runs a listener inside the organization whose entry or file changed, so this
+			// looks in the current books only: the same id is another entry (or file) in every other one.
+			tags?.onChange(async (c) => {
 				if (!c || c.module_id === ctx.id || !FOLLOWED.includes(c.tag)) return;
 				const key = c.tag === "customer" ? `customer:${c.entity_id}` : c.tag;
-				const set = c.action === "set";
-				// Outside a request Ledger is in the main books: look in each organization's.
-				await ctx.orgs.forEach(async (org) => {
-					const { rows } = await q(
-						`WITH old AS (
-							SELECT id, paid_by_tag AS was FROM ${T("documents")}
-							 WHERE kind = 'invoice' AND journal_entry_id = $1::bigint AND status IN ('open', 'paid') FOR UPDATE
-						)
-						UPDATE ${T("documents")} d
-						   SET entry_tags = CASE WHEN $3::boolean THEN array_append(array_remove(d.entry_tags, $2::text), $2::text) ELSE array_remove(d.entry_tags, $2::text) END,
-						       paid_by_tag = CASE WHEN $2::text = 'paid' AND d.status = 'open' THEN $3::boolean ELSE d.paid_by_tag END,
-						       updated_at = now()
-						  FROM old WHERE d.id = old.id
-						RETURNING d.id, d.number, d.status, d.paid_by_tag, old.was`,
-						[String(c.entry_id), key, set],
-					);
-					for (const r of rows) {
-						if (r.paid_by_tag !== r.was) {
-							ctx.log.info(r.paid_by_tag ? "invoice tagged paid in Ledger; shown as paid" : "paid tag taken off in Ledger; invoice is open again", { invoice: r.number, by: c.module_id ?? "a person" });
-							changed(org);
-						} else if (c.tag === "paid" && !set && r.status === "paid") {
-							// Sales holds the payments: it stays paid, and the next sync puts the tag back.
-							ctx.log.info("paid tag taken off in Ledger, but Sales has this invoice's payments; it stays paid", { invoice: r.number, by: c.module_id ?? "a person" });
-						}
-					}
-				});
+				await follow("journal_entry_id", "entry_tags", c.entry_id, key, c.action === "set", c.module_id, changed);
+			});
+			fileTags?.onChange(async (c) => {
+				if (!c || c.module_id === ctx.id) return;
+				if (c.tag === "extracted") {
+					// Someone cleared what was saved with the PDF: an invoice's is saved again by the next sync.
+					if (c.action === "removed") await q(`UPDATE ${T("documents")} SET file_data_status = NULL WHERE pdf_document_id = $1::bigint`, [String(c.document_id)]);
+					return;
+				}
+				if (!FILE_FOLLOWED.includes(c.tag)) return;
+				await follow("pdf_document_id", "file_tags", c.document_id, c.tag, c.action === "set", c.module_id, changed);
 			});
 		},
 	};

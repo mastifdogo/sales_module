@@ -32,7 +32,12 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
 - **file PDFs in Ledger's Documents**: when an invoice is issued, and each
   time an invoice, quote or estimate is emailed, its PDF is filed there
   under the customer, one per document (the latest replaces the one before).
-  The document's page has a **Filed PDF** button that opens it.
+  The document's page has a **Filed PDF** button that opens it. The file
+  says what it is in Ledger's shared language (Ledger 0.27.0): what Sales
+  knows about the document is saved with it (customer, number, dates,
+  totals, lines), so no other module has to read the PDF again, and an
+  invoice's PDF carries the file tags **billed**, **paid** and **overdue**
+  as the invoice changes.
 - **bill costs to customers**: Sales has its own clearing account, *Billable
   costs to recharge* (one per currency, made for you). Post a cost you'll
   pass on to it in Ledger and tag the entry with the customer; it then shows
@@ -93,7 +98,7 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.21.1 or newer** (root mode, clearing accounts, renumbered accounts, Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
+Needs **Ledger 0.27.0 or newer** (the one file store with tags on files and data kept with a file, shared tags on journal entries, root mode, clearing accounts, renumbered accounts, Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
 "+ New account…", journal entry links, settings per organization, plus the
 settings form, Gmail, search and user roles from earlier versions). In
 Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
@@ -119,6 +124,49 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.19.0**: the PDFs Sales files speak Ledger's shared file language
+  (needs **Ledger 0.27.0**), and fixes from a review.
+  - **Data kept with the file.** When a PDF is filed (an invoice issued,
+    any document emailed), Sales saves what it knows as the file's extracted
+    data: `type` (invoice, quote or estimate), `customer`, `entity_id`,
+    `number`, `date`, `due_date`, `currency`, `subtotal_cents`, `tax_cents`,
+    `total_cents`, `items` (description, quantity, unit, rate_cents,
+    amount_cents) and `sales` (`id`, `kind`, `status`). Other modules read
+    that instead of the PDF. The status in it follows the document, and
+    invoices filed by an earlier version get theirs on the first sync (a
+    quote or estimate gets it the next time it is emailed).
+  - **Tags on the file.** An invoice's PDF is tagged **billed** once issued,
+    **paid** when paid (which takes **overdue** off), **overdue** while past
+    due; the tags come off when the invoice is voided, and **paid** when a
+    payment is removed. A person tagging the PDF **paid** on Ledger's
+    Documents page is treated like tagging the invoice's entry: the invoice
+    shows as *paid (tagged in Ledger)*, and taking the tag off opens it
+    again. The entry and the PDF always say the same.
+  - Fixed: a tag set on an entry in one organization could mark another
+    organization's invoice with the same entry number as paid.
+  - Fixed: document numbers past 9999 were cut to four digits (10000 became
+    INV-1000), repeating numbers already used.
+  - Fixed: an invoice or payment whose entry was already reversed in
+    Ledger's journal (or deleted in root mode) could not be voided or
+    removed; it now is, without a second reversal.
+  - Fixed: issuing a draft checks its billable costs again. If one was
+    reversed, replaced or invoiced elsewhere meanwhile, the invoice is not
+    issued (edit the draft).
+  - Fixed: one bank deposit could pay more than its amount when applied
+    twice at the same moment, and a debit that isn't on a bank account from
+    Settings could be applied as a deposit.
+  - Fixed: an invoice that was being issued when Ledger stopped, after its
+    entry was posted, became a draft again and would post twice; it is now
+    open with that entry.
+  - Fixed: deposit matching only looked at the newest 40 unmatched
+    deposits; the rules now look at all of them (only what is sent to the
+    AI is capped).
+  - Clear answers to bad input: a date in year 0000, a due date past
+    9999-12-31, deleting a tax by an impossible id (404), deleting a
+    customer who has projects (409).
+  - Only an admin can send the test email.
+  - Lists of invoices, quotes and estimates come a page at a time, with
+    **Show more** and a count, instead of stopping silently at 500.
 - **0.18.0**: an invoice line that bills costs from Ledger has a
   **Description from a tag…** dropdown with every tag on those costs'
   entries; picking one fills the description. **+ Billable items** can
@@ -309,6 +357,12 @@ secret field in Ledger's form and is never sent back to the browser.
   remove the tag in Ledger, or record the real payment in Sales, to change
   that. An invoice that Sales holds payments for in full stays paid, and
   gets its **paid** tag back if someone removes it.
+- **Tags on the filed PDF** (Ledger 0.27.0): an invoice's PDF in Ledger's
+  Documents carries **billed**, **paid** and **overdue** the same way, with
+  posting on or off, and tagging the PDF **paid** there does what tagging
+  the entry does. Who the file is with is the document's customer, not a
+  tag. Ledger also shows the file as **extracted**: the data Sales saved
+  with it.
 - **Quotes and estimates**: *Email* (or *Mark as sent*), then *Accepted* or
   *Declined*. *Convert to invoice* creates a draft invoice with the same
   lines and tax rates, linked both ways. Sent quotes stay editable until
@@ -325,7 +379,9 @@ Everything the page does is available under `/api/v1/m/sales` with a Ledger
 login:
 
 - `invoices`, `quotes`, `estimates`: list, create, read, update, delete, plus
-  `/:id/pdf`, `/:id/send`, `/:id/duplicate`
+  `/:id/pdf`, `/:id/send`, `/:id/duplicate`. A list returns a page:
+  `?limit=` (1 to 500, 500 if left out) and `?offset=`, answered with
+  `data`, `total`, `limit`, `offset` and `has_more`
 - invoices also have `/:id/issue`, `/:id/void` and `/:id/payments`
 - quotes and estimates also have `/:id/mark-sent`, `/:id/accept`,
   `/:id/decline`, `/:id/reopen` and `/:id/convert`
@@ -335,7 +391,8 @@ login:
   `payments/apply` (apply a deposit the user picked)
 - `customers`, `categories`, `taxes`, `settings` (read-only), `numbering`,
   `settings/test-email`, `summary`
-- Changing taxes, categories or numbering needs the admin role.
+- Changing taxes, categories or numbering, and the test email, need the
+  admin role.
 
 ## Development
 
@@ -355,6 +412,9 @@ server/email.mjs        sending through ctx.mail (or the older own-SMTP settings
 server/search.mjs       results for Ledger's search bar
 server/payments.mjs     receive payment, deposit matching (rules + ctx.llm)
 server/dashboard.mjs    notifications and to-dos on Ledger's dashboard
+server/tags.mjs         Ledger's shared tags on invoices' entries and filed PDFs
+server/projects.mjs     projects
+server/root.mjs         root mode
 server/move-settings.mjs  one-time copy of pre-0.2.0 settings into Ledger's form
 lib/money.mjs           exact money and tax arithmetic
 lib/pdf.mjs             PDF writer and document layout

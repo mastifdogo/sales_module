@@ -11,11 +11,12 @@
 
 import { addDays, computeTotals, formatDecimal, formatMoney, MAX_CENTS, today } from "../lib/money.mjs";
 import { renderDocumentPdf } from "../lib/pdf.mjs";
-import { KINDS } from "./common.mjs";
+import { isNotFound, KINDS } from "./common.mjs";
 import { billableItems } from "./billable.mjs";
 import { openLink } from "./search.mjs";
 
 const MAX_LINES = 200;
+const MAX_PAGE = 500; // documents per page of a list
 // Column types for parameters in INSERT ... SELECT, where Postgres can't infer them.
 const COLUMN_TYPES = {
 	customer_id: "bigint",
@@ -31,6 +32,36 @@ const COLUMN_TYPES = {
 	project_id: "bigint",
 };
 const OPEN_QUOTE = ["draft", "sent"];
+
+/**
+ * What Sales knows about an invoice, quote or estimate (as getDocument()
+ * returns it), in the keys every Ledger module reads a file's data by
+ * (Ledger ≥ 0.27.0, ctx.documents.setExtracted): money in integer cents,
+ * dates YYYY-MM-DD. What is Sales' own goes under "sales".
+ */
+export function extractionOf(doc) {
+	const cents = (v) => Number(BigInt(v ?? 0)); // far below 2^53: see MAX_CENTS
+	return {
+		type: doc.kind,
+		customer: doc.customer?.name ?? "",
+		entity_id: doc.customer?.entity_id === null || doc.customer?.entity_id === undefined ? null : Number(doc.customer.entity_id),
+		number: doc.number,
+		date: doc.issue_date,
+		due_date: doc.due_date,
+		currency: doc.currency,
+		subtotal_cents: cents(doc.subtotal_cents),
+		tax_cents: cents(doc.tax_cents),
+		total_cents: cents(doc.total_cents),
+		items: (doc.lines ?? []).map((l) => ({
+			description: l.description,
+			quantity: Number(formatDecimal(l.quantity, 3)),
+			unit: "",
+			rate_cents: cents(l.unit_price_cents),
+			amount_cents: cents(l.amount_cents),
+		})),
+		sales: { id: Number(doc.id), kind: doc.kind, status: doc.status },
+	};
+}
 
 export function documentRoutes(ctx, h, mail, tags) {
 	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings, CUSTOMERS, TAX_ACCOUNTS, CATEGORY_ACCOUNTS } = h;
@@ -175,10 +206,12 @@ export function documentRoutes(ctx, h, mail, tags) {
 		// The prefix comes from Ledger's settings form; the counter from the module's own table.
 		const params = [...Object.values(cols), user.username, linesJson, kind, (await loadSettings())[prefix]];
 		const n = names.length;
+		// The number has at least four digits (INV-0042). lpad() cuts a longer text short
+		// ("10000" to "1000"), so past 9999 the width is the number's own.
 		const sql = `
 			WITH n AS (
 				UPDATE ${T("settings")} SET ${next} = ${next} + 1 WHERE id = 1
-				RETURNING $${n + 4}::text || lpad((${next} - 1)::text, 4, '0') AS number
+				RETURNING $${n + 4}::text || lpad((${next} - 1)::text, greatest(4, length((${next} - 1)::text)), '0') AS number
 			), doc AS (
 				INSERT INTO ${T("documents")} (kind, number, ${names.join(", ")}, created_by)
 				SELECT $${n + 3}::text, n.number, ${names.map((k, i) => `$${i + 1}::${COLUMN_TYPES[k]}`).join(", ")}, $${n + 1}::text FROM n
@@ -354,6 +387,30 @@ export function documentRoutes(ctx, h, mail, tags) {
 	/** Who an entry is with, for Ledger (≥ 0.16.0): the customer's entity, when it has an active one. */
 	const entityOf = (doc) => (doc.customer?.entity_id != null && doc.customer.entity_active ? { entity_id: Number(doc.customer.entity_id) } : {});
 
+	/**
+	 * Whether an entry Sales posted still stands in the books, so that undoing
+	 * the record it belongs to must reverse it. A person may have reversed it
+	 * in Ledger's journal already, or deleted it in root mode: then there is
+	 * nothing left to reverse (Ledger would answer 409 or 404, and the invoice
+	 * or payment could never be voided or removed). Returns the entry, or
+	 * null when it is gone or already reversed.
+	 */
+	async function stillInBooks(entryId, what) {
+		let entry;
+		try {
+			entry = await ctx.ledger.getJournalEntry(entryId);
+		} catch (e) {
+			if (!isNotFound(e)) throw e;
+			ctx.log.info("the journal entry is no longer in the books; nothing to reverse", { entry: String(entryId), what });
+			return null;
+		}
+		if (entry.reversed_by_id !== null && entry.reversed_by_id !== undefined) {
+			ctx.log.info("the journal entry was already reversed in Ledger; not reversing it again", { entry: String(entryId), reversed_by: String(entry.reversed_by_id), what });
+			return null;
+		}
+		return entry;
+	}
+
 	/** Links an entry that already exists (a reversal, a matched deposit); a failure here never undoes the work. */
 	async function linkEntry(entryId, link, user) {
 		try {
@@ -371,34 +428,54 @@ export function documentRoutes(ctx, h, mail, tags) {
 	async function filePdf(doc, pdf, user) {
 		if (!ctx.documents) return;
 		try {
-			let id;
-			try {
-				const made = await ctx.documents.add(
-					{
-						kind: doc.kind === "invoice" ? "invoice" : "other",
-						origin: "created",
-						filename: pdfName(doc),
-						data: pdf,
-						title: `${KINDS[doc.kind].label} ${doc.number} · ${doc.customer.name}`.slice(0, 200),
-						doc_date: doc.issue_date,
-						...entityOf(doc),
-					},
-					user,
-				);
-				id = made.id;
-			} catch (e) {
-				// The same bytes are already filed: use that document.
-				const m = e.status === 409 ? /\(document (\d+)\)/.exec(e.message) : null;
-				if (!m) throw e;
-				id = Number(m[1]);
-			}
+			// ensure(): files it, or gives back the document that already holds the same bytes.
+			const { document } = await ctx.documents.ensure(
+				{
+					kind: doc.kind === "invoice" ? "invoice" : "other",
+					origin: "created",
+					filename: pdfName(doc),
+					data: pdf,
+					title: `${KINDS[doc.kind].label} ${doc.number} · ${doc.customer.name}`.slice(0, 200),
+					doc_date: doc.issue_date,
+					...entityOf(doc),
+				},
+				user,
+			);
+			const id = document.id;
 			const prev = doc.pdf_document_id;
-			await q(`UPDATE ${T("documents")} SET pdf_document_id = $2 WHERE id = $1`, [String(doc.id), String(id)]);
+			// Another file: Sales knows of no tags or saved data on it yet.
+			await q(
+				`UPDATE ${T("documents")}
+				    SET file_tags = CASE WHEN pdf_document_id IS DISTINCT FROM $2::bigint THEN '{}' ELSE file_tags END,
+				        file_data_status = CASE WHEN pdf_document_id IS DISTINCT FROM $2::bigint THEN NULL ELSE file_data_status END,
+				        pdf_document_id = $2::bigint
+				  WHERE id = $1`,
+				[String(doc.id), String(id)],
+			);
 			if (prev !== null && prev !== undefined && String(prev) !== String(id)) await ctx.documents.remove(Number(prev)).catch(() => {});
+			// The file says what Sales already knows, so no other module has to read it; and its
+			// tags (billed, paid, overdue) follow the invoice.
+			await saveFileData({ ...doc, pdf_document_id: id }, user);
+			await tags.syncFiles(doc.id, user);
 		} catch (e) {
 			ctx.log.warn("could not file the PDF in Ledger's documents", { document: String(doc.id), err: e.message });
 		}
 	}
+
+	/**
+	 * Saves what Sales knows about a document as the data kept with its filed
+	 * PDF (the document's extraction, Ledger ≥ 0.27.0). Sales made the file,
+	 * so this is its own record, not something read by AI: nothing to approve.
+	 * It replaces what was there: the PDF was just filed, or is an issued
+	 * invoice's, which doesn't change.
+	 */
+	async function saveFileData(doc, user) {
+		if (!ctx.documents?.setExtracted || doc.pdf_document_id === null || doc.pdf_document_id === undefined) return;
+		await ctx.documents.setExtracted(Number(doc.pdf_document_id), { data: extractionOf(doc), replace: true }, user);
+		await q(`UPDATE ${T("documents")} SET file_data_status = $2 WHERE id = $1 AND pdf_document_id = $3::bigint`, [String(doc.id), doc.status, String(doc.pdf_document_id)]);
+	}
+	// The sync saves it for invoices whose PDF was filed before Sales did this (tags.mjs).
+	tags.saveFileDataWith?.(async (did, user) => saveFileData(await getDocument(did), user));
 
 	/** Issues a draft invoice: locks it, posts it to the books when enabled, and marks it open. */
 	async function issueInvoice(did, user) {
@@ -413,6 +490,15 @@ export function documentRoutes(ctx, h, mail, tags) {
 			const doc = await getDocument(did, "invoice");
 			const totals = computeTotals(doc.lines);
 			if (totals.total <= 0n) throw bad("the invoice total must be more than zero");
+			// The costs it bills were checked when the draft was saved; one may have been reversed,
+			// replaced or put on another invoice since. Issuing it anyway would bill a cost that is
+			// gone, tag nothing "billed", and leave its replacement free to be invoiced again.
+			try {
+				await billable.check(String(doc.customer_id), doc.currency, doc.lines.map((l) => (l.billed_ledger_line_ids ?? []).map(String)), doc.id, doc.lines.map((l) => l.rate_tag_id ?? null));
+			} catch (e) {
+				if (e?.status !== 409 && e?.status !== 422) throw e;
+				throw conflict(`invoice ${doc.number} can't be issued as it is (edit the draft): ${e.message}`);
+			}
 			if (s.post_to_ledger) {
 				const entry = await ctx.ledger.createJournalEntry(
 					{
@@ -471,6 +557,9 @@ export function documentRoutes(ctx, h, mail, tags) {
 	 * Returns the payment id; on failure nothing is left behind.
 	 */
 	async function recordPayment(did, { date, amount, method = "", reference = "", posting = "bank", matched = null }, user) {
+		// A matched deposit pays at most its own amount (`matched.cents`), over all the payments that use it.
+		const depositLimit = matched ? BigInt(matched.cents).toString() : null;
+		const depositUsedUp = () => conflict("that deposit was applied elsewhere meanwhile and has less left; reload and try again");
 		if (amount <= 0n) throw bad("amount must be more than zero");
 		const s = await loadSettings();
 		const before = await getDocument(did, "invoice");
@@ -489,7 +578,8 @@ export function documentRoutes(ctx, h, mail, tags) {
 			lines = posting.lines.map((l) => ({ ...l, memo: l.memo ?? memo }));
 		}
 
-		// Record the payment and raise paid_cents in one statement, only if it still fits the balance.
+		// Record the payment and raise paid_cents in one statement, only if it still fits the balance
+		// and, for a matched deposit, what the payments already matched to that deposit leave of it.
 		const { rows } = await q(
 			`WITH doc AS (
 				UPDATE ${T("documents")}
@@ -497,14 +587,31 @@ export function documentRoutes(ctx, h, mail, tags) {
 				       status = CASE WHEN paid_cents + $2::bigint >= total_cents THEN 'paid' ELSE status END,
 				       paid_by_tag = CASE WHEN paid_cents + $2::bigint >= total_cents THEN false ELSE paid_by_tag END
 				 WHERE id = $1 AND kind = 'invoice' AND status = 'open' AND paid_cents + $2::bigint <= total_cents
+				   AND ($8::bigint IS NULL OR $2::bigint + (SELECT coalesce(sum(m.amount_cents), 0) FROM ${T("payments")} m WHERE m.matched_line_id = $8::bigint) <= $9::bigint)
 				RETURNING id
 			)
 			INSERT INTO ${T("payments")} (document_id, payment_date, amount_cents, method, reference, created_by, matched_entry_id, matched_line_id)
 			SELECT id, $3::date, $2::bigint, $4::text, $5::text, $6::text, $7::bigint, $8::bigint FROM doc RETURNING id`,
-			[did, amount.toString(), date, method, reference, user.username, matched ? String(matched.entry_id) : null, matched ? String(matched.line_id) : null],
+			[did, amount.toString(), date, method, reference, user.username, matched ? String(matched.entry_id) : null, matched ? String(matched.line_id) : null, depositLimit],
 		);
-		if (!rows[0]) throw conflict(`${before.number} changed meanwhile; reload and try again`);
+		if (!rows[0]) {
+			if (matched) {
+				const used = await q(`SELECT coalesce(sum(amount_cents), 0)::bigint AS cents FROM ${T("payments")} WHERE matched_line_id = $1`, [String(matched.line_id)]);
+				if (amount + BigInt(used.rows[0]?.cents ?? 0) > BigInt(matched.cents)) throw depositUsedUp();
+			}
+			throw conflict(`${before.number} changed meanwhile; reload and try again`);
+		}
 		const pid = rows[0].id;
+		if (matched) {
+			// Two payments recorded at the very same moment don't see each other in the statement
+			// above (each reads what was committed when it began). Now that this one is committed,
+			// look again: whichever of them looks last sees both and steps back, before anything is posted.
+			const used = await q(`SELECT coalesce(sum(amount_cents), 0)::bigint AS cents FROM ${T("payments")} WHERE matched_line_id = $1`, [String(matched.line_id)]);
+			if (BigInt(used.rows[0]?.cents ?? 0) > BigInt(matched.cents)) {
+				await removePayment(did, pid);
+				throw depositUsedUp();
+			}
+		}
 		if (lines) {
 			try {
 				const entry = await ctx.ledger.createJournalEntry(
@@ -534,7 +641,7 @@ export function documentRoutes(ctx, h, mail, tags) {
 		if (!p) throw notFound("payment");
 		// Reverse first: if that fails, nothing has changed. A second concurrent
 		// attempt fails here too, since Ledger reverses an entry only once.
-		if (p.journal_entry_id !== null) {
+		if (p.journal_entry_id !== null && (await stillInBooks(p.journal_entry_id, `payment on invoice ${doc.number}`))) {
 			const rev = await ctx.ledger.reverseJournalEntry(p.journal_entry_id, { entry_date: today(), description: `Removed payment on invoice ${doc.number}` }, user);
 			await linkEntry(rev.id, invoiceLink(doc, "Removed payment on invoice"), user);
 		}
@@ -621,19 +728,28 @@ ${paras}
 			if (project && !/^\d{1,18}$/.test(project)) throw bad("project_id is not valid");
 			const where = Object.hasOwn(LIST_FILTERS[kind], status) ? LIST_FILTERS[kind][status] : null;
 			if (!where) throw bad(`status must be one of: ${Object.keys(LIST_FILTERS[kind]).filter(Boolean).join(", ")}`);
-			const { rows } = await q(
-				`SELECT d.id, d.kind, d.number, d.status, d.issue_date::text, d.due_date::text, d.currency, d.total_cents, d.paid_cents,
-				        d.sent_at, d.customer_id, d.status = 'open' AND d.paid_by_tag AS paid_by_tag, c.name AS customer_name, c.company AS customer_company
+			// A page at a time (?limit=, at most 500, and ?offset=); `total` and `has_more` say what is left.
+			const limit = req.query.get("limit") ? h.intIn(req.query.get("limit"), "limit", 1, MAX_PAGE) : MAX_PAGE;
+			const offset = req.query.get("offset") ? h.intIn(req.query.get("offset"), "offset", 0, 1_000_000_000) : 0;
+			const from = `
 				   FROM ${T("documents")} d JOIN ${CUSTOMERS} c ON c.id = d.customer_id
 				  WHERE d.kind = $5 AND ${where}
 				    AND ($1 = '' OR d.number ILIKE $2 OR c.name ILIKE $2 OR c.company ILIKE $2 OR d.po_number ILIKE $2)
 				    AND ($3 = '' OR d.customer_id = nullif($3, '')::bigint)
 				    AND ($6 = '' OR d.project_id = nullif($6, '')::bigint)
-				    AND $4::date IS NOT NULL
-				  ORDER BY d.issue_date DESC, d.id DESC
-				  LIMIT 500`,
-				[search, like(search), customer, today(), kind, project],
-			);
+				    AND $4::date IS NOT NULL`;
+			const params = [search, like(search), customer, today(), kind, project];
+			const [{ rows }, count] = await Promise.all([
+				q(
+					`SELECT d.id, d.kind, d.number, d.status, d.issue_date::text, d.due_date::text, d.currency, d.total_cents, d.paid_cents,
+					        d.sent_at, d.customer_id, d.status = 'open' AND d.paid_by_tag AS paid_by_tag, c.name AS customer_name, c.company AS customer_company${from}
+					  ORDER BY d.issue_date DESC, d.id DESC
+					  LIMIT $7::int OFFSET $8::int`,
+					[...params, limit, offset],
+				),
+				q(`SELECT count(*)::int AS total${from}`, params),
+			]);
+			const total = Math.max(count.rows[0]?.total ?? 0, offset + rows.length);
 			const t = today();
 			return {
 				data: rows.map((d) => ({
@@ -641,6 +757,10 @@ ${paras}
 					overdue: isInvoice && d.status === "open" && !d.paid_by_tag && d.due_date < t,
 					expired: !isInvoice && OPEN_QUOTE.includes(d.status) && d.due_date < t,
 				})),
+				total,
+				limit,
+				offset,
+				has_more: offset + rows.length < total,
 			};
 		});
 
@@ -806,9 +926,13 @@ ${paras}
 			let voidEntry = null;
 			if (journal_entry_id !== null) {
 				try {
-					const rev = await ctx.ledger.reverseJournalEntry(journal_entry_id, { entry_date: date, description: `Void invoice ${number}` }, req.user);
-					await q(`UPDATE ${T("documents")} SET void_entry_id = $2 WHERE id = $1`, [did, String(rev.id)]);
-					voidEntry = rev.id;
+					// Its entry may have been reversed in Ledger's journal already (or deleted in root
+					// mode): then the books need nothing more, and the invoice is simply void.
+					if (await stillInBooks(journal_entry_id, `invoice ${number}`)) {
+						const rev = await ctx.ledger.reverseJournalEntry(journal_entry_id, { entry_date: date, description: `Void invoice ${number}` }, req.user);
+						await q(`UPDATE ${T("documents")} SET void_entry_id = $2 WHERE id = $1`, [did, String(rev.id)]);
+						voidEntry = rev.id;
+					}
 				} catch (e) {
 					await q(`UPDATE ${T("documents")} SET status = 'open' WHERE id = $1 AND status = 'void'`, [did]);
 					throw e;
@@ -917,14 +1041,47 @@ ${paras}
 		deletePayment,
 		getDocument,
 		makeClearingAccounts,
-		/** An invoice left in "posting" means Ledger stopped mid-issue; put it back to draft. */
+		/**
+		 * An invoice left in "posting" means Ledger stopped mid-issue. Issuing
+		 * posts the entry first and marks the invoice open after, so the entry
+		 * may already be in the books, linked to the invoice: then the invoice
+		 * is open with that entry (a draft would post it a second time when
+		 * issued again). With nothing posted it is a draft again.
+		 */
 		async recover(org = null) {
-			const stuck = await q(`UPDATE ${T("documents")} SET status = 'draft' WHERE kind = 'invoice' AND status = 'posting' RETURNING number`);
+			const where = org ? { organization: org.name } : {};
+			const stuck = await q(`SELECT id, number FROM ${T("documents")} WHERE kind = 'invoice' AND status = 'posting' ORDER BY id`);
 			for (const r of stuck.rows) {
-				ctx.log.warn("invoice was being issued when Ledger stopped; it is a draft again. Check the books for a duplicate entry before issuing it.", {
-					number: r.number,
-					...(org ? { organization: org.name } : {}),
-				});
+				let entry = null;
+				try {
+					// The invoice's own entry carries the link "Invoice <number> · <customer>"; payments and
+					// reversals are linked to the same invoice under other labels.
+					const linked = await ctx.ledger.linkedEntries(`invoice:${r.id}`);
+					const posted = linked.filter((l) => !l.reversed && String(l.label ?? "").startsWith("Invoice ")).map((l) => BigInt(l.entry_id));
+					if (posted.length) entry = posted.reduce((a, b) => (a > b ? a : b)).toString();
+				} catch (e) {
+					// Not knowing whether it was posted, a draft could post it twice: it waits for the next start.
+					ctx.log.warn("could not check the books for an invoice that was being issued when Ledger stopped; it stays as it is until Ledger starts again", { number: r.number, err: e.message, ...where });
+					continue;
+				}
+				if (entry === null) {
+					await q(`UPDATE ${T("documents")} SET status = 'draft' WHERE id = $1 AND status = 'posting'`, [String(r.id)]);
+					ctx.log.warn("invoice was being issued when Ledger stopped, before anything was posted; it is a draft again", { number: r.number, ...where });
+					continue;
+				}
+				await q(
+					`UPDATE ${T("documents")} SET status = 'open', journal_entry_id = $2::bigint, issued_at = coalesce(issued_at, now()), updated_at = now() WHERE id = $1 AND status = 'posting'`,
+					[String(r.id), entry],
+				);
+				ctx.log.warn("invoice was being issued when Ledger stopped, after its entry was posted; it is open now, with that entry", { number: r.number, entry, ...where });
+				// What issuing does next: the tags, and the PDF on file. Neither may stop the startup.
+				try {
+					await tags.sync(String(r.id));
+					const issued = await getDocument(String(r.id));
+					await filePdf(issued, renderDocumentPdf(issued, await loadSettings()));
+				} catch (e) {
+					ctx.log.warn("could not finish issuing a recovered invoice", { number: r.number, err: e.message, ...where });
+				}
 			}
 		},
 	};

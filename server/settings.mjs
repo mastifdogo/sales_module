@@ -44,7 +44,9 @@ export function settingsRoutes(ctx, h, mail) {
 		return publicSettings(req);
 	});
 
+	// Checks the mail setup by sending a test message: part of setting Sales up (admins only).
 	ctx.route("POST", "/settings/test-email", async (req) => {
+		requireAdmin(req);
 		const s = await loadSettings();
 		const st = await mail.status(s);
 		const to = mail.addresses(body(req).to || st.from || s.business_email, "to", true);

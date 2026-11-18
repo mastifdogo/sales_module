@@ -141,10 +141,11 @@ payments to the books.
 
 - Layout: `server.mjs` registers the route files in `server/` (`catalog`,
   `customers`, `documents`, `email`, `settings`, `search`, `dashboard`,
-  `move-settings`, `common`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
+  `move-settings`, `common`, `tags`, `payments`, `projects`, `root`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
-  `test/*.test.mjs` (`npm test`).
-- Needs Ledger ≥ 0.21.1. Account codes live only where Ledger renumbers
+  `test/*.test.mjs` (`npm test`), with the stand-in Ledger in `test/fake.mjs`.
+- Needs Ledger ≥ 0.27.0 (the one file store, file tags, extracted data).
+  Account codes live only where Ledger renumbers
   them: settings keys with "account" (`receivable_account_cad`, …) and text
   columns ending `_account` (`taxes.cad_payable_account`,
   `categories.cad_revenue_account`, and the USD ones). The API still shows
@@ -169,8 +170,8 @@ payments to the books.
   reverses it. `GET /customers/:id/billable?currency=&invoice=` lists them;
   saving an invoice re-checks every billed id (409 if taken). Duplicating
   or converting never copies billed ids.
-- Shared tags (Ledger 0.23.0, feature-detected: `if (ctx.tags)`, the
-  manifest still asks for 0.21.1): `server/tags.mjs`. `tags.sync(did?)`
+- Shared tags (Ledger 0.23.0; still feature-detected with `if (ctx.tags)`,
+  which the unit tests rely on): `server/tags.mjs`. `tags.sync(did?)`
   compares, in SQL, what each issued invoice's entry should carry
   (`customer:<entity id>`, `billed`, `paid`, `overdue`; void: only the
   customer) with `documents.entry_tags` (what Sales knows to be on it) and
@@ -181,6 +182,9 @@ payments to the books.
   (NULL = not worked out) holds the source entries tagged `billed`; void
   removes the tag unless another issued invoice bills the same entry.
   `tags.listen()` follows `ctx.tags.onChange` (not Sales' own changes):
+  it runs once, in the organization the change was made in (Ledger calls
+  the listener inside it; entry ids are per organization, so never wrap it
+  in `ctx.orgs.forEach`).
   "paid" set on an open invoice's entry sets `documents.paid_by_tag`
   (status stays `open`, no payment, nothing posted; shown as "paid (tagged
   in Ledger)" and left out of open/overdue lists, totals, reminders and
@@ -232,14 +236,37 @@ payments to the books.
   posted entry (invoice, payments) with what Sales posted and returns
   `entry_changes`; the invoice page warns. Sales never rewrites either.
 - PDFs: `filePdf()` in `documents.mjs` files a
-  document's PDF in Ledger's PDF store (`ctx.documents.add`, origin
+  document's PDF in Ledger's Documents (`ctx.documents.ensure`, origin
   "created", kind "invoice" or "other", with the customer's entity) when an
   invoice is issued and whenever a document is emailed, keeps the id in
   `documents.pdf_document_id`, and removes the one it replaces: one stored
-  PDF per document. A 409 (same bytes already filed) reuses the document
-  the error names. It never fails the caller. `getDocument()` returns
-  `pdf_url` only if the stored document still exists (a restore or a person
-  may have removed it). Downloads are still rendered on request.
+  PDF per document. `ensure` gives back the document that already holds the
+  same bytes (never parse a 409). It never fails the caller. `getDocument()`
+  returns `pdf_url` only if the stored document still exists (a restore or a
+  person may have removed it). Downloads are still rendered on request.
+- What the filed PDF says (Ledger 0.27.0). `saveFileData()` saves
+  `extractionOf(doc)` with it (`ctx.documents.setExtracted`, `replace:
+  true`): the shared keys `type`, `customer`, `entity_id`, `number`, `date`,
+  `due_date`, `currency`, `subtotal_cents`, `tax_cents`, `total_cents`,
+  `items`, plus `sales: { id, kind, status }`. Sales made the file, so this
+  is not AI output and needs no approval. `documents.file_data_status` is
+  the status last saved there (NULL: nothing saved with the current PDF);
+  `syncFileData()` in `tags.mjs` merges only `sales` when the status moved
+  on, and saves the whole of it for issued invoices that have none (filed by
+  an older version, or cleared by a person). A quote or estimate may have
+  been edited since it was filed, so its data is only saved when it is
+  filed again.
+- File tags (`ctx.documents.tags`), in `tags.mjs` next to the entry tags and
+  mirroring them: `syncFiles(did?)` compares what an invoice's PDF should
+  carry (`billed` while open or paid, `paid`, `overdue`; nothing when void
+  or a draft) with `documents.file_tags` and calls `set` / `remove` for the
+  difference; it runs inside `tags.sync()` and right after a PDF is filed.
+  No customer tag on files: that is the document's `entity_id`. A PDF
+  deleted in Ledger (404) clears `pdf_document_id`. `listen()` follows
+  `ctx.documents.tags.onChange` with the same `follow()` statement as for
+  entries, keyed by `pdf_document_id`: "paid" on an open invoice's PDF sets
+  `paid_by_tag`, the next sync then tags the entry too, and the other way
+  round, so both always say the same.
 - Customers live in Ledger's shared entities:
   `server/customer-store.mjs` adds, updates, adopts and moves them.
   `customers.entity_id` points at the entity, which holds name, email,
@@ -307,6 +334,19 @@ payments to the books.
   Ledger's rule is no SMTP of a module's own, so don't extend it, and remove
   it once the user agrees.
 - Taxes, categories and numbering are admin-only (`requireAdmin`).
+- Undoing: `stillInBooks()` in `documents.mjs` looks at an entry before
+  void or payment removal reverses it; one a person already reversed, or
+  deleted in root mode, is left alone and the record is still undone.
+  Ledger's own "not found" error has no status: use `isNotFound()` from
+  `common.mjs`.
+- A deposit pays at most its amount: `recordPayment` gets
+  `matched.cents`, refuses in the recording statement when the payments
+  matched to that line would exceed it, and looks again after its own
+  payment is committed (two concurrent statements don't see each other),
+  stepping back with 409 before anything is posted. Only a debit on a bank
+  account from Settings is a deposit.
+- Lists (`GET /invoices` …) are paged: `limit` (≤ 500), `offset`, and
+  `total` / `has_more` in the answer; the page shows "Show more".
 - Payments: `server/payments.mjs` (receive payment over open invoices;
   deposit matching with rules, then `ctx.llm.json` with every answer checked
   against real balances). Matches are stored in `payment_suggestions`

@@ -62,3 +62,18 @@ test("dates", () => {
 	assert.ok(!isDate("2026-02-30"));
 	assert.ok(!isDate("26-10-25"));
 });
+
+test("dates stay within what the database takes: years 0001 to 9999", () => {
+	// JavaScript has a year 0; PostgreSQL's DATE doesn't.
+	assert.ok(!isDate("0000-01-01"));
+	assert.ok(!isDate("0000-12-31"));
+	assert.ok(isDate("0001-01-01"));
+	assert.ok(isDate("9999-12-31"));
+	// A due date can't run past the last date ("+010000-01-30" isn't one).
+	assert.equal(addDays("9999-12-31", 30), "9999-12-31");
+	assert.equal(addDays("9999-12-15", 30), "9999-12-31");
+	assert.equal(addDays("9999-12-01", 30), "9999-12-31");
+	assert.equal(addDays("9999-11-30", 30), "9999-12-30");
+	assert.equal(addDays("0001-01-10", -30), "0001-01-01");
+	assert.equal(addDays("0001-01-01", 1), "0001-01-02");
+});

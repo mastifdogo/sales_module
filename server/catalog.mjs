@@ -64,13 +64,17 @@ export function catalogRoutes(ctx, h) {
 	ctx.route("DELETE", "/taxes/:id", async (req) => {
 		requireAdmin(req);
 		const tid = id(req, "id", "tax");
+		await getTax(tid); // 404 when there is none
 		const used = await q(
 			`SELECT 1 FROM ${T("document_lines")} WHERE taxes @> jsonb_build_array(jsonb_build_object('id', $1::bigint)) LIMIT 1`,
 			[tid],
 		);
 		if (used.rowCount) throw conflict("this tax is used on documents; turn it off instead");
-		await q(`UPDATE ${T("customers")} SET tax_ids = array_remove(tax_ids, $1::int) WHERE $1::int = ANY(tax_ids)`, [tid]);
-		await q(`UPDATE ${T("categories")} SET tax_ids = array_remove(tax_ids, $1::int) WHERE $1::int = ANY(tax_ids)`, [tid]);
+		// tax_ids are int[]: an id too large for an int is in none of them (and would overflow the cast).
+		if (BigInt(tid) <= 2147483647n) {
+			await q(`UPDATE ${T("customers")} SET tax_ids = array_remove(tax_ids, $1::int) WHERE $1::int = ANY(tax_ids)`, [tid]);
+			await q(`UPDATE ${T("categories")} SET tax_ids = array_remove(tax_ids, $1::int) WHERE $1::int = ANY(tax_ids)`, [tid]);
+		}
 		const { rowCount } = await q(`DELETE FROM ${T("taxes")} WHERE id = $1`, [tid]);
 		if (rowCount === 0) throw notFound("tax");
 	});

@@ -12,6 +12,13 @@ export const KINDS = {
 	estimate: { label: "Estimate", plural: "estimates", prefix: "estimate_prefix", next: "next_estimate_number", validDays: "estimate_valid_days" },
 };
 
+/**
+ * True when Ledger says a thing it was asked for doesn't exist (an entry, an
+ * account, a document). Its own "not found" error carries no status (only an
+ * HttpError does), so it is recognised by its class name or message as well.
+ */
+export const isNotFound = (e) => e?.status === 404 || e?.constructor?.name === "NotFoundError" || e?.message === "not found";
+
 export function helpers(ctx) {
 	const T = (name) => `${ctx.schema}.${name}`;
 	const q = (sql, params) => ctx.db.query(sql, params);

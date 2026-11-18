@@ -120,7 +120,13 @@ export function customerRoutes(ctx, h) {
 		const cid = id(req, "id", "customer");
 		const { rows } = await q(`SELECT count(*)::int AS n FROM ${T("documents")} WHERE customer_id = $1`, [cid]);
 		if (rows[0].n > 0) throw conflict("this customer has invoices, quotes or estimates; archive them instead");
-		const { rowCount } = await q(`DELETE FROM ${T("customers")} WHERE id = $1`, [cid]);
+		const projects = await q(`SELECT count(*)::int AS n FROM ${T("projects")} WHERE customer_id = $1`, [cid]);
+		if (projects.rows[0]?.n > 0) throw conflict("this customer has projects; delete the projects first, or archive the customer instead");
+		const { rowCount } = await q(`DELETE FROM ${T("customers")} WHERE id = $1`, [cid]).catch((e) => {
+			// Something was added for them meanwhile (a document, a project): the row is still referenced.
+			if (e?.code === "23503") throw conflict("this customer has documents or projects; archive them instead");
+			throw e;
+		});
 		if (rowCount === 0) throw notFound("customer");
 	});
 

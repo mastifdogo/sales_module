@@ -142,8 +142,9 @@ export function paymentRoutes(ctx, h, docs) {
 				});
 			}
 		}
+		// All of them, newest first: the rules look at every one. Only what goes to the AI is capped.
 		out.sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
-		return out.slice(0, MAX_DEPOSITS);
+		return out;
 	}
 
 	const norm = (s) => String(s ?? "").toLowerCase();
@@ -315,28 +316,35 @@ export function paymentRoutes(ctx, h, docs) {
 		let aiUsed = false;
 		let aiProblem = ai.problem;
 		let fromAi = [];
+		// The rules looked at every deposit; the AI gets the newest of the ones they left, up to a prompt's worth.
+		const taken = new Set(rules.map((r) => `${r.deposit.line_id}`));
+		const forAi = deps.filter((d) => !taken.has(`${d.line_id}`)).slice(0, MAX_DEPOSITS);
 		if (o.use_ai !== false && ai.available) {
-			const taken = new Set(rules.map((r) => `${r.deposit.line_id}`));
 			try {
-				fromAi = await aiMatches(deps.filter((d) => !taken.has(`${d.line_id}`)), invoices);
+				fromAi = await aiMatches(forAi, invoices);
 				aiUsed = true;
 			} catch (e) {
 				aiProblem = `The AI couldn't be asked: ${e.message}`;
 			}
 		}
-		// Replace the open suggestions for the deposits looked at with the new ones.
-		// A search for one customer only saw that customer's invoices, so it
-		// leaves suggestions that pay anyone else's alone.
+		// Replace the open suggestions for the deposits looked at with the new ones:
+		// a rule's suggestion for any deposit (the rules saw them all), and whatever
+		// was suggested for a deposit a rule matched now or the AI was (or would have
+		// been) asked about. An older deposit beyond the AI's share keeps the AI's
+		// earlier suggestion. A search for one customer only saw that customer's
+		// invoices, so it leaves suggestions that pay anyone else's alone.
 		const found = [...rules, ...fromAi];
 		const looked = deps.map((d) => String(d.line_id));
+		const replaced = [...taken, ...forAi.map((d) => String(d.line_id))];
 		if (looked.length) {
 			await q(
 				`DELETE FROM ${T("payment_suggestions")} s
 				  WHERE s.status = 'pending' AND s.line_id = ANY($1::bigint[])
+				    AND (s.source = 'rule' OR s.line_id = ANY($3::bigint[]))
 				    AND ($2::bigint IS NULL OR NOT EXISTS (
 				          SELECT 1 FROM jsonb_array_elements(s.allocations) a JOIN ${T("documents")} d ON d.id = (a ->> 'invoice_id')::bigint
 				           WHERE d.customer_id <> $2::bigint))`,
-				[looked, cid],
+				[looked, cid, replaced],
 			);
 		}
 		for (const m of found) {
@@ -407,6 +415,10 @@ export function paymentRoutes(ctx, h, docs) {
 		if (entry.reverses_id !== null || entry.reversed_by_id !== null) throw conflict("That entry was reversed; it can't pay an invoice.");
 		const line = entry.lines.find((l) => String(l.id) === String(lineId));
 		if (!line || BigInt(line.debit_cents ?? 0) <= 0n) throw bad("line_id must be the deposit (a debit) in that entry");
+		// A deposit is money that arrived in a bank account Sales is told about; any other debit
+		// (an expense, a receivable, a line parked in Ledger's Unreconciled account) pays nothing.
+		const banks = Object.values(s.accounts).map((a) => a.bank).filter(Boolean);
+		if (!banks.includes(line.account_code)) throw bad("line_id must be a deposit on a bank account set under Settings → Sales → Accounts");
 		const ours = await q(`SELECT 1 FROM ${T("payments")} WHERE journal_entry_id = $1 LIMIT 1`, [String(entry.id)]);
 		if (ours.rowCount) throw conflict("That entry is a payment Sales already posted.");
 		const used = await q(`SELECT coalesce(sum(amount_cents), 0)::bigint AS cents FROM ${T("payments")} WHERE matched_line_id = $1`, [String(line.id)]);
@@ -430,7 +442,9 @@ export function paymentRoutes(ctx, h, docs) {
 			date: entry.entry_date,
 			method: method || "Bank deposit",
 			reference: (entry.reference || `Entry #${entry.id}`).slice(0, 100),
-			matched: { entry_id: entry.id, line_id: line.id },
+			// recordPayment holds every payment matched to this deposit to its amount, also
+			// when two people apply it at the same moment (the check above is only the first look).
+			matched: { entry_id: entry.id, line_id: line.id, cents: BigInt(line.debit_cents) },
 		};
 		const done = [];
 		try {

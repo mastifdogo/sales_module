@@ -22,7 +22,8 @@ import { entryTags } from "./server/tags.mjs";
 
 export default async function register(ctx) {
 	const h = helpers(ctx);
-	// Ledger's shared tags on journal entries (Ledger ≥ 0.23.0); does nothing on an older one.
+	// Ledger's shared tags on invoices' journal entries (ctx.tags) and on their filed PDFs
+	// (ctx.documents.tags, Ledger ≥ 0.27.0).
 	const tags = entryTags(ctx, h);
 	const dashboard = dashboardSync(ctx, h, tags);
 	// Every successful change (anything but GET) refreshes the dashboard items.
@@ -54,7 +55,8 @@ export default async function register(ctx) {
 		await docs.makeClearingAccounts(org);
 		await docs.recover(org);
 	});
-	// An invoice tagged paid (or no longer) by a person or another module: its lists and reminders follow.
+	// An invoice tagged paid (or no longer) by a person or another module, on its entry or its
+	// filed PDF: its lists and reminders follow, in the organization it was tagged in.
 	tags.listen((org) => dashboard.schedule(org?.id));
 	// The first sync also tags the invoices issued before the tags existed.
 	dashboard.start();

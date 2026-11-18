@@ -125,7 +125,7 @@ test("a list's status filter that isn't one answers 422, not a server error", as
 		await assert.rejects(list("/invoices", status), (e) => e.status === 422, status);
 		await assert.rejects(list("/quotes", status), (e) => e.status === 422, status);
 	}
-	assert.deepEqual(await list("/invoices", "overdue"), { data: [] });
+	assert.deepEqual(await list("/invoices", "overdue"), { data: [], total: 0, limit: 500, offset: 0, has_more: false });
 });
 
 test("looking for one customer's deposits keeps the suggestions for other customers", async () => {
@@ -144,9 +144,10 @@ test("looking for one customer's deposits keeps the suggestions for other custom
 	await match({ customer_id: 2 });
 	assert.equal(deletes.length, 2);
 	// Everyone's invoices were looked at: every open suggestion for the deposit is replaced.
-	assert.deepEqual(deletes[0].params, [["14"], null]);
+	// (The third list: the deposits whose suggestion of any kind is replaced, here the one the AI would be asked about.)
+	assert.deepEqual(deletes[0].params, [["14"], null, ["14"]]);
 	// One customer's: only suggestions that pay nobody else's invoices.
-	assert.deepEqual(deletes[1].params, [["14"], "2"]);
+	assert.deepEqual(deletes[1].params, [["14"], "2", ["14"]]);
 	assert.match(deletes[1].sql, /d\.customer_id <> \$2::bigint/);
 });
 

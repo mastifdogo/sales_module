@@ -277,6 +277,7 @@ window.addEventListener("hashchange", () => {
 // ---- document lists ----------------------------------------------------------------
 
 const listState = {};
+const PAGE_SIZE = 200; // documents fetched per page of a list
 
 async function docList(kind, qs = new URLSearchParams()) {
 	const K = KINDS[kind];
@@ -286,24 +287,35 @@ async function docList(kind, qs = new URLSearchParams()) {
 	const [summary, settings] = await Promise.all([isInvoice ? api("/summary") : null, api("/settings")]);
 
 	const tbody = h("tbody");
-	const load = async () => {
-		const { data } = await api(`/${K.plural}?${new URLSearchParams({ status: state.status, q: state.q })}`);
-		tbody.replaceChildren(
-			...(data.length
-				? data.map((d) =>
-						h(
-							"tr",
-							rowLink(docHref(d)),
-							h("td", {}, d.number),
-							h("td", {}, d.customer_name, d.customer_company ? h("div", { class: "muted" }, d.customer_company) : null),
-							h("td", {}, d.issue_date),
-							h("td", {}, d.due_date),
-							h("td", {}, badge(d), d.sent_at ? h("div", { class: "muted", title: when(d.sent_at) }, "emailed") : null),
-							h("td", { class: "num" }, money(d.total_cents, d.currency)),
-							isInvoice ? h("td", { class: "num" }, d.status === "void" ? "—" : money(BigInt(d.total_cents) - BigInt(d.paid_cents))) : null,
-						),
-					)
-				: [h("tr", {}, h("td", { colspan: 7, class: "muted" }, state.q || state.status ? `No matching ${K.plural}.` : `No ${K.plural} yet.`))]),
+	// The list comes a page at a time; "Show more" fetches the next one.
+	const more = h("p", { class: "muted", hidden: true });
+	const row = (d) =>
+		h(
+			"tr",
+			rowLink(docHref(d)),
+			h("td", {}, d.number),
+			h("td", {}, d.customer_name, d.customer_company ? h("div", { class: "muted" }, d.customer_company) : null),
+			h("td", {}, d.issue_date),
+			h("td", {}, d.due_date),
+			h("td", {}, badge(d), d.sent_at ? h("div", { class: "muted", title: when(d.sent_at) }, "emailed") : null),
+			h("td", { class: "num" }, money(d.total_cents, d.currency)),
+			isInvoice ? h("td", { class: "num" }, d.status === "void" ? "—" : money(BigInt(d.total_cents) - BigInt(d.paid_cents))) : null,
+		);
+	let shown = 0;
+	let asked = 0; // only the latest search or filter fills the table
+	const load = async (offset = 0) => {
+		const mine = offset === 0 ? ++asked : asked;
+		const page = await api(`/${K.plural}?${new URLSearchParams({ status: state.status, q: state.q, limit: PAGE_SIZE, offset })}`);
+		if (mine !== asked) return;
+		const rows = page.data.map(row);
+		if (offset === 0) tbody.replaceChildren(...(rows.length ? rows : [h("tr", {}, h("td", { colspan: 7, class: "muted" }, state.q || state.status ? `No matching ${K.plural}.` : `No ${K.plural} yet.`))]));
+		else tbody.append(...rows);
+		shown = offset + page.data.length;
+		const total = Number(page.total ?? shown);
+		more.hidden = !page.has_more;
+		more.replaceChildren(
+			`Showing ${shown.toLocaleString()} of ${total.toLocaleString()} ${K.plural}. `,
+			h("button", { type: "button", onclick: (e) => busy(e.currentTarget, () => load(shown)) }, "Show more"),
 		);
 	};
 
@@ -363,6 +375,7 @@ async function docList(kind, qs = new URLSearchParams()) {
 				tbody,
 			),
 		),
+		more,
 	);
 	await load();
 }
@@ -2156,7 +2169,8 @@ async function setupView(section) {
 				? h("p", {}, em.via === "mail" ? `Sending through Ledger's mailbox (${em.from}).` : `Sending through Sales' own mail server settings as ${em.from}. Ledger has a shared mailbox (Settings → Mail) that works with any mail provider; switch to it above when it's connected.`)
 				: h("p", { style: "color:var(--warn)" }, em.problem),
 			h("p", { class: "hint" }, "To connect Ledger's mailbox, or let Sales send through it, go to ", h("a", { href: "/settings/mail", target: "_top" }, "Settings → Mail"), "."),
-			h("div", { class: "actions" }, h("button", { type: "button", disabled: !em.ready, onclick: (e) => busy(e.currentTarget, testEmail) }, "Send a test email")),
+			admin ? h("div", { class: "actions" }, h("button", { type: "button", disabled: !em.ready, onclick: (e) => busy(e.currentTarget, testEmail) }, "Send a test email")) : null,
+			onlyAdmin,
 		);
 	}
 
