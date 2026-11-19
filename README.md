@@ -14,6 +14,10 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   can carry several taxes (e.g. GST + PST). Customers and categories can
   have their own taxes (e.g. none for an exempt or US customer). Your GST/HST
   registration number prints on every document.
+- **give customers credit memos**: an amount credited against the income
+  from a customer (`CM-0001`…), posted straight to the books and held in
+  Sales' clearing account "Customer credits to apply" until you take it off
+  one of their invoices from **+ Billable items**
 - **sort sales into categories** (Labour, Materials, …), each tracking to
   a revenue account. The Categories page shows sales per category over any
   date range.
@@ -124,6 +128,23 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.20.0**: credit memos.
+  - **Credit memos** tab, and **+ Credit memo** on a customer's page: a
+    customer, a date, an amount, the category whose revenue it comes off
+    (or the default revenue account) and a description. Creating one posts
+    it at once (posting must be on): debit revenue, credit Sales' new
+    clearing account **Customer credits to apply** (a liability, one per
+    currency, made for you), with the customer on the entry.
+  - The credit then appears in that customer's **+ Billable items** on an
+    invoice, marked *credit*, as a negative amount. It always becomes a line
+    of its own, without taxes. Issuing the invoice debits the clearing
+    account back to zero, so the customer owes that much less; voiding the
+    invoice puts the credit back in the list.
+  - A credit memo is *open* until an invoice (draft or issued) takes it,
+    then *applied*. An open one can be voided, which reverses its entry.
+    In root mode an admin can delete one (nothing is reversed).
+  - Fixed: the billable items window showed the word "null" when no item
+    had rate tags.
 - **0.19.0**: the PDFs Sales files speak Ledger's shared file language
   (needs **Ledger 0.27.0**), and fixes from a review.
   - **Data kept with the file.** When a PDF is filed (an invoice issued,
@@ -294,6 +315,11 @@ each currency you invoice in. The codes are examples; pick them in Settings.
 | Revenue per category, plus a default for lines without one | revenue | `4000 Sales`, `4100 Labour`, `4200 Materials` |
 | Each sales tax you collect | liability | `2200 GST/HST payable`, `2210 PST payable` |
 
+Sales also makes two clearing accounts of its own in each currency (you don't
+pick them): **Billable costs to recharge** (asset) and **Customer credits to
+apply** (liability, for credit memos). Both return to zero as invoices take
+what's in them.
+
 ## Set up
 
 Setup is for admins (Ledger's user roles). Bookkeepers create and send
@@ -363,6 +389,11 @@ secret field in Ledger's form and is never sent back to the browser.
   the entry does. Who the file is with is the document's customer, not a
   tag. Ledger also shows the file as **extracted**: the data Sales saved
   with it.
+- **Credit memos**: *+ New credit memo* (Credit memos tab) or *+ Credit memo*
+  (a customer's page) posts a credit against that customer's income. To use
+  it, open or start one of their invoices, click *+ Billable items* and tick
+  the credit: it is added as a negative line. Void a credit memo that isn't
+  on an invoice to undo it.
 - **Quotes and estimates**: *Email* (or *Mark as sent*), then *Accepted* or
   *Declined*. *Convert to invoice* creates a draft invoice with the same
   lines and tax rates, linked both ways. Sent quotes stay editable until
@@ -389,6 +420,11 @@ login:
   deposit matches and save them as suggestions), `payments/suggestions`
   (list; `/:id/apply` with optional changed amounts, `/:id/reject`),
   `payments/apply` (apply a deposit the user picked)
+- `credit-memos`: list (`?status=open|applied|void`, `?customer_id=`,
+  `?q=`, paged like the documents), create (`customer_id`, `amount`,
+  `memo_date`, `currency`, `category_id`, `description`), read, and
+  `/:id/void`; `customers/:id/billable` lists unapplied ones with
+  `credit: true` and a negative `amount_cents`
 - `customers`, `categories`, `taxes`, `settings` (read-only), `numbering`,
   `settings/test-email`, `summary`
 - Changing taxes, categories or numbering, and the test email, need the

@@ -158,7 +158,7 @@ test("billable costs: their entries are tagged billed when the invoice is issued
 		tagsOf: (entry) => [{ tag: "billed", module_id: entry === "82" ? "employees" : "sales" }],
 		extra: {
 			ledger: {
-				clearingAccount: async () => ({ code: "1150", name: "Billable costs to recharge" }),
+				clearingAccount: async ({ key }) => (key === "billable_costs" ? { code: "1150", name: "Billable costs to recharge" } : { code: "2150", name: "Customer credits to apply" }),
 				getAccount: async () => ({ code: "1150", name: "Billable costs to recharge", currency: "CAD", module_id: "sales" }),
 				listJournalEntries: async () => [
 					{ id: 70, entry_date: "2026-11-01", description: "Permit", entity: { id: 5 }, lines: [{ id: 700, account_code: "1150", debit_cents: 5000 }, { id: 701, account_code: "1000", credit_cents: 5000 }] },

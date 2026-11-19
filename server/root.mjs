@@ -90,6 +90,7 @@ export function rootRoutes(ctx, h) {
 		const { rows } = await q(`SELECT id FROM ${T("customers")} WHERE id = $1`, [cid]);
 		if (!rows[0]) throw notFound("customer");
 		for (const d of (await q(`SELECT id FROM ${T("documents")} WHERE customer_id = $1 ORDER BY id DESC`, [cid])).rows) await removeDocument(req, d.id);
+		for (const m of (await q(`SELECT id, number FROM ${T("credit_memos")} WHERE customer_id = $1 ORDER BY id DESC`, [cid])).rows) await root.remove(req, "credit_memos", m.id, `Sales: deleted credit memo ${m.number}`);
 		await root.remove(req, "customers", cid, `Sales: deleted customer ${cid}`);
 		return { deleted: true };
 	});

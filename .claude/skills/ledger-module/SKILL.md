@@ -170,6 +170,21 @@ payments to the books.
   reverses it. `GET /customers/:id/billable?currency=&invoice=` lists them;
   saving an invoice re-checks every billed id (409 if taken). Duplicating
   or converting never copies billed ids.
+- Credit memos (0.20.0): `server/credit-memos.mjs`, table `credit_memos`
+  (number `CM-` from `settings.next_credit_memo_number`). Creating one posts
+  at once (needs posting on): Dr the category's revenue (or the default) /
+  Cr Sales' second clearing account (`billable.credits(cur)`, key
+  `customer_credits`, "Customer credits to apply", liability), with the
+  customer's entity and the link `credit-memo:<id>`; `ledger_line_id` keeps
+  the clearing line. `billable.forCustomer` also looks in that account and
+  returns its credit lines as items with `credit: true`, `clearing: true`
+  and a negative `amount_cents` (never as project costs). `postingLines()`
+  clears each billed clearing item into its own account (`it.account_code`),
+  so a credit is debited back out. "Applied" is worked out (an invoice that
+  isn't void bills `ledger_line_id`), not stored; only an unapplied memo can
+  be voided (reverses its entry). The picker puts each credit on its own
+  line with no taxes. `recover()` finishes or drops memos left in
+  "posting"; root deletes via `DELETE /root/credit-memos/:id`.
 - Shared tags (Ledger 0.23.0; still feature-detected with `if (ctx.tags)`,
   which the unit tests rely on): `server/tags.mjs`. `tags.sync(did?)`
   compares, in SQL, what each issued invoice's entry should carry

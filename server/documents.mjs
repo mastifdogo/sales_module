@@ -75,7 +75,10 @@ export function documentRoutes(ctx, h, mail, tags) {
 		try {
 			const s = await loadSettings();
 			const { rows } = await q(`SELECT DISTINCT currency FROM ${T("customers")}`);
-			for (const cur of new Set([s.default_currency, ...rows.map((r) => r.currency)])) await billable.clearing(cur);
+			for (const cur of new Set([s.default_currency, ...rows.map((r) => r.currency)])) {
+				await billable.clearing(cur);
+				await billable.credits(cur);
+			}
 		} catch (e) {
 			ctx.log.warn("could not make the billable-costs clearing accounts", { err: e.message, ...(org ? { organization: org.name } : {}) });
 		}
@@ -306,14 +309,15 @@ export function documentRoutes(ctx, h, mail, tags) {
 
 	/** The ledger lines for an invoice: Dr receivable; Cr revenue per category account and each tax's account. */
 	async function postingLines(doc, totals, s) {
-		// Billed items that came from Sales' clearing account: their cost goes
-		// back to that account (clearing it); the rest of the line is revenue.
-		const fromClearing = new Map();
-		let clearingCode = null;
+		// Billed items that came from one of Sales' clearing accounts: their
+		// amount goes back to that account (clearing it); the rest of the line is
+		// revenue. A cost is credited back to "Billable costs to recharge"; a
+		// credit memo (a negative amount) is debited back out of "Customer
+		// credits to apply".
+		const fromClearing = new Map(); // journal line id → { code, cents, credit }
 		if (doc.kind === "invoice" && doc.lines.some((l) => (l.billed_ledger_line_ids ?? []).length)) {
-			const { items, clearing } = await billable.forCustomer(String(doc.customer_id), doc.currency, { exceptDoc: doc.id });
-			clearingCode = clearing?.code ?? null;
-			for (const it of items) if (it.clearing) fromClearing.set(String(it.line_id), BigInt(it.amount_cents));
+			const { items } = await billable.forCustomer(String(doc.customer_id), doc.currency, { exceptDoc: doc.id });
+			for (const it of items) if (it.clearing) fromClearing.set(String(it.line_id), { code: it.account_code, cents: BigInt(it.amount_cents), credit: it.credit === true });
 		}
 		const cur = doc.currency;
 		const receivable = s.accounts?.[cur]?.receivable;
@@ -333,14 +337,14 @@ export function documentRoutes(ctx, h, mail, tags) {
 				);
 			}
 			// A cost split over several lines (one per rate item) is cleared once, on its first line.
-			const cost = clearingCode
-				? (l.billed_ledger_line_ids ?? []).reduce((n, id) => {
-						if (cleared.has(String(id))) return n;
-						cleared.add(String(id));
-						return n + (fromClearing.get(String(id)) ?? 0n);
-					}, 0n)
-				: 0n;
-			if (cost !== 0n) add(clearingCode, cost, "Billable costs");
+			let cost = 0n;
+			for (const id of l.billed_ledger_line_ids ?? []) {
+				const it = fromClearing.get(String(id));
+				if (!it || cleared.has(String(id))) continue;
+				cleared.add(String(id));
+				add(it.code, it.cents, it.credit ? "Customer credit applied" : "Billable costs");
+				cost += it.cents;
+			}
 			add(acct, totals.amounts[i] - cost, cat ? cat.name : "Sales");
 		});
 		for (const t of totals.taxes) {

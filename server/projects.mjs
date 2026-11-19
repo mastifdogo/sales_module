@@ -100,7 +100,7 @@ export function projectRoutes(ctx, h, billable) {
 		for (const cur of CURRENCIES) {
 			const r = await billable.forCustomer(String(p.customer_id), cur);
 			problems.push(...r.problems);
-			for (const it of r.items) if (it.project_id === null || String(it.project_id) === String(p.id)) costs.push({ ...it, currency: cur });
+			for (const it of r.items) if (!it.credit && (it.project_id === null || String(it.project_id) === String(p.id))) costs.push({ ...it, currency: cur });
 		}
 		return { ...p, documents: docs.rows, costs, problems: [...new Set(problems)] };
 	});
@@ -142,7 +142,7 @@ export function projectRoutes(ctx, h, billable) {
 		}
 		if (p.status !== "active") throw conflict("this project is closed");
 		const open = new Map();
-		for (const cur of CURRENCIES) for (const it of (await billable.forCustomer(String(p.customer_id), cur)).items) open.set(String(it.line_id), it);
+		for (const cur of CURRENCIES) for (const it of (await billable.forCustomer(String(p.customer_id), cur)).items) if (!it.credit) open.set(String(it.line_id), it);
 		const missing = ids.filter((x) => !open.has(x));
 		if (missing.length) throw conflict(`${missing.length} of these costs aren't unbilled costs of ${p.customer_name} any more; reload`);
 		const other = ids.filter((x) => open.get(x).project_id !== null && String(open.get(x).project_id) !== String(pid));

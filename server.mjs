@@ -6,6 +6,7 @@
 import { catalogRoutes } from "./server/catalog.mjs";
 import { helpers } from "./server/common.mjs";
 import { csvImport, importRoutes } from "./server/imports.mjs";
+import { creditMemoRoutes } from "./server/credit-memos.mjs";
 import { customerRoutes } from "./server/customers.mjs";
 import { dashboardSync } from "./server/dashboard.mjs";
 import { copyDocumentSettings, documentSettingsRoutes } from "./server/document-settings.mjs";
@@ -42,6 +43,7 @@ export default async function register(ctx) {
 	const customers = customerRoutes(routes, h);
 	const docs = documentRoutes(routes, h, mail, tags);
 	paymentRoutes(routes, h, docs);
+	const creditMemos = creditMemoRoutes(routes, h);
 	rootRoutes(routes, h);
 	projectRoutes(routes, h, billableItems(ctx, h));
 	importRoutes(routes, h, dashboard, customers);
@@ -54,6 +56,7 @@ export default async function register(ctx) {
 		await copyDocumentSettings(ctx, h, org);
 		await docs.makeClearingAccounts(org);
 		await docs.recover(org);
+		await creditMemos.recover(org);
 	});
 	// An invoice tagged paid (or no longer) by a person or another module, on its entry or its
 	// filed PDF: its lists and reminders follow, in the organization it was tagged in.

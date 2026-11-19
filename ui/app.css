@@ -77,7 +77,7 @@ tfoot td { border-bottom: 0; }
 .badge.draft { color: var(--muted); }
 .badge.open { color: var(--accent); }
 .badge.overdue { color: var(--warn); }
-.badge.paid { color: var(--ok); }
+.badge.paid, .badge.applied { color: var(--ok); }
 .badge.void { color: var(--danger); }
 .badge.sent { color: var(--accent); }
 .badge.accepted { color: var(--ok); }

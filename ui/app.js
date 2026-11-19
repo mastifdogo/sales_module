@@ -237,6 +237,8 @@ const routes = [
 	[/^\/customers\/(\d+)\/edit$/, (m) => customerForm(m[1])],
 	[/^\/projects$/, (m, qs) => projectList(qs)],
 	[/^\/projects\/(\d+)$/, (m) => projectView(m[1])],
+	[/^\/credit-memos$/, (m, qs) => creditMemoList(qs)],
+	[/^\/credit-memos\/(\d+)$/, (m) => creditMemoView(m[1])],
 	[/^\/categories$/, () => categoryList()],
 	[/^\/payments$/, () => paymentsView()],
 ];
@@ -640,7 +642,7 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 			h(
 				"p",
 				{ class: "muted" },
-				`No unbilled ${currency} items for this customer. Post costs to ${r.clearing ? `${r.clearing.code} ${r.clearing.name}` : r.accounts.join(", ")}${r.clearing && r.accounts.length > 1 ? " (or the other accounts in Settings → Sales → Accounts)" : ""} in Ledger and tag the entry with this customer to bill them here.`,
+				`No unbilled ${currency} items or credits for this customer. Post costs to ${r.clearing ? `${r.clearing.code} ${r.clearing.name}` : r.accounts.join(", ")}${r.clearing && r.accounts.length > 1 ? " (or the other accounts in Settings → Sales → Accounts)" : ""} in Ledger and tag the entry with this customer to bill them here; credit memos (Credit memos tab) show up here too.`,
 			),
 			h("div", { class: "actions" }, h("button", { type: "button", onclick: closeDialog }, "Close")),
 		);
@@ -677,7 +679,9 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 	};
 	tagSel.onchange = from.onchange = to.onchange = () => update();
 	const clear = h("button", { type: "button", class: "link", onclick: () => ((tagSel.value = ""), (from.value = ""), (to.value = ""), update()) }, "Clear filters");
-	const label = (it) => [it.description || "Billable item", it.date].join(" · ");
+	const label = (it) => (it.credit ? [`Credit ${it.reference || "memo"}`, it.description, it.date].filter(Boolean).join(" · ") : [it.description || "Billable item", it.date].join(" · "));
+	// A credit memo's credit is its own line, without taxes (the memo took it off revenue only).
+	const creditLine = (it) => ({ description: label(it).slice(0, 1000), quantity_text: "1", unit_price_cents: it.amount_cents, tax_ids: [], billed_ledger_line_ids: [it.line_id] });
 	// Costs with rate items in Ledger (tag "rate": what was counted, how many, at what
 	// rate) can fill one line per item instead: its description, quantity and rate.
 	const hasRates = items.some((it) => (it.rates ?? []).length);
@@ -696,21 +700,24 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 		}));
 	// Split what's chosen: costs filled from their rate items, and the rest.
 	const split = (c) => {
-		const byRates = useRates.checked ? c.filter((i) => (i.rates ?? []).length) : [];
-		return { byRates, rest: c.filter((i) => !byRates.includes(i)) };
+		const credits = c.filter((i) => i.credit);
+		const costs = c.filter((i) => !i.credit);
+		const byRates = useRates.checked ? costs.filter((i) => (i.rates ?? []).length) : [];
+		return { byRates, credits, rest: costs.filter((i) => !byRates.includes(i)) };
 	};
 	const buttons = [
 		h("button", {
 			type: "button",
 			class: "primary",
 			onclick: () => {
-				const { byRates, rest: c } = split(chosen());
+				const { byRates, credits, rest: c } = split(chosen());
 				const out = byRates.flatMap(rateLines);
 				if (c.length) {
 					const sum = c.reduce((n, i) => n + BigInt(i.amount_cents), 0n);
 					const description = c.length === 1 ? label(c[0]) : ["Billable items:", ...c.map((i) => `• ${label(i)} – ${money(i.amount_cents, currency)}`)].join("\n").slice(0, 1000);
 					out.push({ description, quantity_text: "1", unit_price_cents: sum.toString(), billed_ledger_line_ids: c.map((i) => i.line_id) });
 				}
+				out.push(...credits.map(creditLine));
 				closeDialog();
 				done(out, items);
 			},
@@ -721,7 +728,7 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 				const byItem = new Set(split(chosen()).byRates);
 				closeDialog();
 				done(
-					chosen().flatMap((i) => (byItem.has(i) ? rateLines(i) : [{ description: label(i), quantity_text: "1", unit_price_cents: i.amount_cents, billed_ledger_line_ids: [i.line_id] }])),
+					chosen().flatMap((i) => (i.credit ? [creditLine(i)] : byItem.has(i) ? rateLines(i) : [{ description: label(i), quantity_text: "1", unit_price_cents: i.amount_cents, billed_ledger_line_ids: [i.line_id] }])),
 					items,
 				);
 			},
@@ -729,9 +736,10 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 	];
 	const all = h("input", { type: "checkbox", checked: true, "aria-label": "Select all shown", onchange: (e) => (items.forEach((it, i) => shown(it) && (boxes[i].checked = e.target.checked)), update()) });
 	for (const b of boxes) b.onchange = update;
-	body.replaceChildren(
+	// replaceChildren() would show a null as the text "null": only real nodes.
+	const parts = [
 		...notes,
-		h("p", { class: "hint" }, "Costs posted in Ledger and tagged with this customer, not invoiced yet. Items from the clearing account are taken back out of it when the invoice is posted."),
+		h("p", { class: "hint" }, "Costs posted in Ledger and tagged with this customer, not invoiced yet, and the customer's credit memos not applied yet (each its own line, taken off the invoice). Items from Sales' clearing accounts are taken back out of them when the invoice is posted."),
 		h(
 			"div",
 			{ class: "filters" },
@@ -765,6 +773,7 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 							h(
 								"td",
 								{},
+								it.credit ? h("span", { class: "badge applied", style: "margin-right:0.25rem" }, "credit") : null,
 								it.description || "(no description)",
 								h("div", { class: "muted" }, `${it.account_code} ${it.account_name}${it.reference ? ` · ref ${it.reference}` : ""}${it.project_name ? ` · project ${it.project_name}` : ""}`),
 								(it.tags ?? []).length ? h("div", {}, it.tags.map((t) => h("span", { class: "badge draft", style: "margin-right:0.25rem" }, t))) : null,
@@ -794,7 +803,8 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 		),
 		h("p", {}, total),
 		h("div", { class: "actions" }, ...buttons, h("button", { type: "button", onclick: closeDialog }, "Cancel")),
-	);
+	];
+	body.replaceChildren(...parts.filter(Boolean));
 	update();
 }
 
@@ -819,6 +829,158 @@ function rootStatusDialog(doc, statuses, path, done) {
 		});
 	};
 	openDialog(form);
+}
+
+// ---- credit memos ------------------------------------------------------------------------
+
+const memoBadge = (m) =>
+	m.status === "void" ? h("span", { class: "badge void" }, "void") : m.applied_to ? h("span", { class: "badge applied" }, "applied") : h("span", { class: "badge open" }, "open");
+
+/**
+ * New credit memo: an amount credited to a customer against their income.
+ * It is posted straight away (Dr revenue / Cr "Customer credits to apply")
+ * and then waits among the customer's billable items for an invoice.
+ */
+async function creditMemoDialog({ customerId = null } = {}, done = () => {}) {
+	const [customers, cats, settings] = await Promise.all([api("/customers"), api("/categories"), api("/settings")]);
+	const active = customers.data.filter((c) => !c.archived);
+	const byId = new Map(active.map((c) => [String(c.id), c]));
+	const custSel = select("customer_id", customerId ?? "", [["", "Choose a customer…"], ...active.map((c) => [String(c.id), c.company ? `${c.name} (${c.company})` : c.name])], { required: true });
+	const cur = select("currency", byId.get(String(customerId ?? ""))?.currency ?? settings.default_currency ?? "CAD", CURRENCY_OPTIONS);
+	custSel.onchange = () => {
+		const c = byId.get(custSel.value);
+		if (c?.currency) cur.value = c.currency;
+	};
+	const form = h(
+		"form",
+		{ method: "dialog" },
+		h("h2", {}, "New credit memo"),
+		h("p", { class: "hint" }, "Credits the customer against the income from them: it is posted now (debit revenue, credit Sales' clearing account “Customer credits to apply”) and then appears in their billable items, to take off an invoice."),
+		field("Customer", custSel),
+		h(
+			"div",
+			{ class: "grid" },
+			field("Date", input("memo_date", todayStr(), { type: "date", required: true })),
+			field("Currency", cur),
+			field("Amount", input("amount", "", { inputmode: "decimal", placeholder: "0.00", required: true })),
+			field("Category (revenue it comes off)", select("category_id", "", [["", "— default revenue account —"], ...cats.data.filter((c) => c.active).map((c) => [c.id, c.name])])),
+		),
+		field("Description", textarea("description", "", { rows: 2, maxlength: 1000, placeholder: "e.g. Refund for the damaged tiles" })),
+		h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Create and post"), h("button", { type: "button", onclick: closeDialog }, "Cancel")),
+	);
+	form.onsubmit = (e) => {
+		e.preventDefault();
+		busy(e.submitter, async () => {
+			const o = formData(form);
+			const saved = await api("/credit-memos", { method: "POST", body: { customer_id: o.customer_id, memo_date: o.memo_date, currency: o.currency, amount: o.amount, category_id: o.category_id || null, description: o.description } });
+			closeDialog();
+			flash(`Credit memo ${saved.number} posted.`);
+			done(saved);
+		});
+	};
+	openDialog(form);
+}
+
+const memoState = { status: "", q: "" };
+
+/** Credit memos tab: every credit memo, open (not applied yet), applied or void. */
+async function creditMemoList(qs = new URLSearchParams()) {
+	if (qs.has("status") && ["", "open", "applied", "void"].includes(qs.get("status"))) memoState.status = qs.get("status");
+	const tbody = h("tbody");
+	const load = async () => {
+		const { data } = await api(`/credit-memos?${new URLSearchParams({ status: memoState.status, q: memoState.q })}`);
+		tbody.replaceChildren(
+			...(data.length
+				? data.map((m) =>
+						h(
+							"tr",
+							rowLink(`#/credit-memos/${m.id}`),
+							h("td", {}, m.number),
+							h("td", {}, m.customer_name, m.customer_company ? h("div", { class: "muted" }, m.customer_company) : null),
+							h("td", {}, m.memo_date),
+							h("td", {}, m.description || h("span", { class: "muted" }, "—")),
+							h("td", {}, memoBadge(m), m.applied_to ? h("div", { class: "muted" }, `on ${m.applied_to.number}`) : null),
+							h("td", { class: "num" }, money(m.amount_cents, m.currency)),
+						),
+					)
+				: [h("tr", {}, h("td", { colspan: 6, class: "muted" }, memoState.q || memoState.status ? "No matching credit memos." : "No credit memos yet."))]),
+		);
+	};
+	const seg = h("div", { class: "seg" });
+	for (const [v, label] of [["", "All"], ["open", "Open"], ["applied", "Applied"], ["void", "Void"]]) {
+		const b = h("button", { class: memoState.status === v ? "on" : "" }, label);
+		b.onclick = () => {
+			memoState.status = v;
+			for (const x of seg.children) x.classList.toggle("on", x === b);
+			load().catch(fail);
+		};
+		seg.append(b);
+	}
+	let t;
+	const search = input("q", memoState.q, { type: "search", placeholder: "Search number, customer or description" });
+	search.oninput = () => {
+		clearTimeout(t);
+		t = setTimeout(() => ((memoState.q = search.value.trim()), load().catch(fail)), 250);
+	};
+	render(
+		h("h1", {}, "Credit memos", h("span", { class: "spacer" }), h("button", { class: "primary", onclick: () => creditMemoDialog({}, (m) => go(`#/credit-memos/${m.id}`)) }, "+ New credit memo")),
+		h("p", { class: "hint" }, "A credit memo takes an amount off the income from a customer and holds it in Sales' clearing account “Customer credits to apply” until you add it to one of their invoices with “+ Billable items”."),
+		h("div", { class: "filters" }, seg, search),
+		scroll(h("table", {}, h("thead", {}, h("tr", {}, ["Number", "Customer", "Date", "Description", "Status"].map((x) => h("th", {}, x)), h("th", { class: "right" }, "Amount"))), tbody)),
+	);
+	await load();
+}
+
+/** One credit memo: what it credits, where it was applied, and voiding it. */
+async function creditMemoView(id) {
+	const [m, settings] = await Promise.all([api(`/credit-memos/${id}`), api("/settings")]);
+	const reload = () => creditMemoView(id).catch(fail);
+	const act = (label, fn, attrs = {}) => h("button", { ...attrs, onclick: (e) => busy(e.currentTarget, fn) }, label);
+	render(
+		h("p", {}, h("a", { href: "#/credit-memos" }, "← Credit memos")),
+		h("h1", {}, `Credit memo ${m.number}`, memoBadge(m)),
+		h(
+			"div",
+			{ class: "actions" },
+			m.status === "open" && !m.applied_to ? h("a", { class: "button primary", href: `#/invoices/new?customer=${m.customer_id}` }, "Apply on a new invoice") : null,
+			m.status === "open" && !m.applied_to
+				? act("Void", async () => {
+						if (!confirm(`Void credit memo ${m.number}? Its entry is reversed, so the credit comes off the clearing account and back onto revenue.`)) return;
+						await api(`/credit-memos/${m.id}/void`, { method: "POST", body: {} });
+						flash(`Credit memo ${m.number} voided.`);
+						reload();
+					}, { class: "danger" })
+				: null,
+			h("span", { class: "spacer" }),
+			settings.root ? h("span", { class: "rootmark", title: "Root mode is on" }, "Root") : null,
+			settings.root
+				? act("Delete", async () => {
+						if (!confirm(`Root: delete credit memo ${m.number} from Sales? Nothing is reversed in the books. It can be put back from Ledger's root log.`)) return;
+						await api(`/root/credit-memos/${m.id}`, { method: "DELETE" });
+						flash(`Credit memo ${m.number} deleted (root).`);
+						go("#/credit-memos");
+					}, { class: "root" })
+				: null,
+		),
+		h(
+			"table",
+			{},
+			h("tbody", {}, [
+				["Customer", h("a", { href: `#/customers/${m.customer_id}` }, m.customer_name)],
+				["Date", m.memo_date],
+				["Amount", money(m.amount_cents, m.currency)],
+				["Comes off", m.category_name ? `revenue of category ${m.category_name}` : "the default revenue account"],
+				["Description", m.description || "—"],
+				["Applied on", m.applied_to ? h("a", { href: `#/invoices/${m.applied_to.id}` }, `Invoice ${m.applied_to.number}`, m.applied_to.status === "draft" ? " (draft)" : "") : m.status === "void" ? "—" : "Not yet: add it to one of the customer's invoices with “+ Billable items”."],
+				m.journal_entry_id ? ["In the books", h("a", { href: `/journal/${m.journal_entry_id}`, target: "_top" }, `Journal entry #${m.journal_entry_id}`)] : null,
+				m.void_entry_id ? ["Voided by", h("a", { href: `/journal/${m.void_entry_id}`, target: "_top" }, `Journal entry #${m.void_entry_id}`)] : null,
+				["Created by", `${m.created_by} · ${when(m.created_at)}`],
+				m.voided_at ? ["Voided", when(m.voided_at)] : null,
+			]
+				.filter(Boolean)
+				.map(([k, v]) => h("tr", {}, h("td", { class: "muted" }, k), h("td", {}, v)))),
+		),
+	);
 }
 
 // ---- projects --------------------------------------------------------------------------
@@ -1592,6 +1754,7 @@ async function customerView(id) {
 			h("a", { class: "button primary", href: `#/invoices/new?customer=${c.id}` }, "+ Invoice"),
 			h("a", { class: "button", href: `#/quotes/new?customer=${c.id}` }, "+ Quote"),
 			h("a", { class: "button", href: `#/estimates/new?customer=${c.id}` }, "+ Estimate"),
+			c.archived ? null : h("button", { onclick: () => creditMemoDialog({ customerId: c.id }, (m) => go(`#/credit-memos/${m.id}`)) }, "+ Credit memo"),
 			openInvoices.length ? h("button", { onclick: () => receivePaymentDialog(c, openInvoices, reload) }, "Receive payment") : null,
 			openInvoices.length ? h("button", { onclick: () => matchDepositsDialog({ customer: c }, reload) }, "Find matching deposits") : null,
 			h("a", { class: "button", href: `#/customers/${c.id}/edit` }, "Edit"),

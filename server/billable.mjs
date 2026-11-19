@@ -8,10 +8,18 @@
 // line keeps which journal lines it bills (document_lines.billed_ledger_line_ids),
 // so an item can't be billed twice. Deleting a draft or voiding an invoice
 // frees its items again.
+//
+// Credit memos (0.20.0) sit in a second clearing account of Sales', "Customer
+// credits to apply" (a liability): a credit memo credits it, tagged with the
+// customer. Each such credit is a billable item with a negative amount
+// (`credit: true`); the invoice that takes it debits the clearing account
+// back to zero and lowers what the customer owes.
 
 const PAGE = 500;
 export const CLEARING_KEY = "billable_costs";
 export const CLEARING_NAME = "Billable costs to recharge";
+export const CREDIT_KEY = "customer_credits";
+export const CREDIT_NAME = "Customer credits to apply";
 const MAX_PAGES = 20; // up to 10,000 entries per account
 
 /**
@@ -57,6 +65,21 @@ export function billableItems(ctx, h) {
 		});
 	}
 
+	/**
+	 * Sales' clearing account for credit memos in a currency (a liability),
+	 * made on first use. Asked for each time, like `clearing()`.
+	 */
+	async function credits(currency) {
+		if (!ctx.ledger.clearingAccount) return null;
+		return ctx.ledger.clearingAccount({
+			key: CREDIT_KEY,
+			name: CREDIT_NAME,
+			currency,
+			type: "liability",
+			description: "Credits Sales gave customers (credit memos) against their income, not applied to an invoice yet. Applying one on an invoice in Sales clears it.",
+		});
+	}
+
 	/** The extra billable accounts set in Settings (codes, renumbered by Ledger with the account). */
 	async function accounts() {
 		return (await loadSettings()).billable_accounts;
@@ -84,8 +107,18 @@ export function billableItems(ctx, h) {
 			ctx.log.warn("could not get the billable-costs clearing account", { currency, err: e.message });
 			return null;
 		});
-		const codes = [...new Set([...(own ? [own.code] : []), ...extra])];
-		const out = { clearing: own ? { code: own.code, name: own.name } : null, accounts: codes, items: [], problems: [] };
+		const credit = await credits(currency).catch((e) => {
+			ctx.log.warn("could not get the customer-credits clearing account", { currency, err: e.message });
+			return null;
+		});
+		const codes = [...new Set([...(own ? [own.code] : []), ...(credit ? [credit.code] : []), ...extra])];
+		const out = {
+			clearing: own ? { code: own.code, name: own.name } : null,
+			credit_clearing: credit ? { code: credit.code, name: credit.name } : null,
+			accounts: codes.filter((c) => !credit || c !== credit.code),
+			items: [],
+			problems: [],
+		};
 		if (codes.length === 0) return out;
 		const { rows } = await q(`SELECT id, entity_id, currency FROM ${CUSTOMERS} c WHERE id = $1`, [String(customerId)]);
 		const cust = rows[0];
@@ -105,6 +138,8 @@ export function billableItems(ctx, h) {
 				continue;
 			}
 			if (acct.currency !== currency || acct.module_id === "ledger") continue; // never Ledger's own (Unreconciled)
+			// The credit memos' account holds credits (to take off an invoice); the others, costs.
+			const isCredit = credit !== null && code === credit.code;
 			for (let page = 0; page < MAX_PAGES; page++) {
 				const entries = await ctx.ledger.listJournalEntries({ accountCode: code, limit: PAGE, offset: page * PAGE });
 				for (const e of entries) {
@@ -112,7 +147,8 @@ export function billableItems(ctx, h) {
 					if (String(e.entity?.id ?? e.entity_id ?? "") !== entity || e.reverses_id != null || e.reversed_by_id != null) continue;
 					for (const l of e.lines) {
 						if (l.account_code !== code) continue;
-						const cents = BigInt(l.debit_cents ?? 0) - BigInt(l.credit_cents ?? 0);
+						const debit = BigInt(l.debit_cents ?? 0) - BigInt(l.credit_cents ?? 0);
+						const cents = isCredit ? -debit : debit;
 						if (cents <= 0n || billed.has(String(l.id))) continue;
 						out.items.push({
 							line_id: String(l.id),
@@ -122,8 +158,10 @@ export function billableItems(ctx, h) {
 							reference: e.reference ?? "",
 							account_code: code,
 							account_name: acct.name,
-							amount_cents: cents.toString(),
-							clearing: own !== null && code === own.code,
+							// A credit is taken off the invoice: a negative amount.
+							amount_cents: (isCredit ? -cents : cents).toString(),
+							clearing: isCredit || (own !== null && code === own.code),
+							credit: isCredit,
 							entry_description: (e.description || "").trim(),
 							// The entry's tags in Ledger, as people read them ("vendor: Hydro One"); not
 							// the customer tag every item has, nor its rate items (below).
@@ -181,5 +219,5 @@ export function billableItems(ctx, h) {
 		if (gone.length) throw new ctx.HttpError(409, `${gone.length} billable item${gone.length === 1 ? " is" : "s are"} no longer available for this customer (already invoiced, reversed, or not tagged with them); reload and choose again`);
 	}
 
-	return { accounts, clearing, forCustomer, check };
+	return { accounts, clearing, credits, forCustomer, check };
 }

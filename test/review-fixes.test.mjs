@@ -171,7 +171,7 @@ async function issuing({ costReversed }) {
 		},
 		extra: {
 			ledger: {
-				clearingAccount: async () => ({ code: "1150", name: "Billable costs to recharge" }),
+				clearingAccount: async ({ key }) => (key === "billable_costs" ? { code: "1150", name: "Billable costs to recharge" } : { code: "2150", name: "Customer credits to apply" }),
 				getAccount: async () => ({ code: "1150", name: "Billable costs to recharge", currency: "CAD", module_id: "sales" }),
 				// The cost the draft bills (journal line 700); reversed in Ledger since the draft was saved, or not.
 				listJournalEntries: async () => [
