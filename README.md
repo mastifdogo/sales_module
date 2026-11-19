@@ -128,6 +128,11 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.20.1**: starting a new invoice for a customer who has credit memos
+  not applied yet asks whether to apply them: a window lists the credits
+  (all ticked), and *Apply credits* adds each as its own line. *Not now*
+  leaves them in *+ Billable items*. It asks once per customer and currency
+  on the form, when the customer is chosen or the currency changed.
 - **0.20.0**: credit memos.
   - **Credit memos** tab, and **+ Credit memo** on a customer's page: a
     customer, a date, an amount, the category whose revenue it comes off
@@ -391,8 +396,9 @@ secret field in Ledger's form and is never sent back to the browser.
   with it.
 - **Credit memos**: *+ New credit memo* (Credit memos tab) or *+ Credit memo*
   (a customer's page) posts a credit against that customer's income. To use
-  it, open or start one of their invoices, click *+ Billable items* and tick
-  the credit: it is added as a negative line. Void a credit memo that isn't
+  it, start an invoice for them: Sales asks whether to apply their open
+  credits. Or click *+ Billable items* on any of their invoices and tick the
+  credit: it is added as a negative line. Void a credit memo that isn't
   on an invoice to undo it.
 - **Quotes and estimates**: *Email* (or *Mark as sent*), then *Accepted* or
   *Declined*. *Convert to invoice* creates a draft invoice with the same

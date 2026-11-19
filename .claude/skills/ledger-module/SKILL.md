@@ -183,7 +183,10 @@ payments to the books.
   so a credit is debited back out. "Applied" is worked out (an invoice that
   isn't void bills `ledger_line_id`), not stored; only an unapplied memo can
   be voided (reverses its entry). The picker puts each credit on its own
-  line with no taxes. `recover()` finishes or drops memos left in
+  line with no taxes (`creditLine()` in `ui/app.js`). A new invoice
+  (`docForm`, not an existing draft) offers the customer's unapplied
+  credits in `applyCreditsDialog()` when the customer is set or the
+  currency changes, once per customer + currency. `recover()` finishes or drops memos left in
   "posting"; root deletes via `DELETE /root/credit-memos/:id`.
 - Shared tags (Ledger 0.23.0; still feature-detected with `if (ctx.tags)`,
   which the unit tests rely on): `server/tags.mjs`. `tags.sync(did?)`

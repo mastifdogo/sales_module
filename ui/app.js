@@ -384,6 +384,55 @@ async function docList(kind, qs = new URLSearchParams()) {
 
 // ---- document editor --------------------------------------------------------------
 
+/** How a credit memo reads on an invoice line: "Credit CM-0001 · Damaged tiles · 2026-11-19". */
+const creditLabel = (it) => [`Credit ${it.reference || "memo"}`, it.description, it.date].filter(Boolean).join(" · ");
+/** A credit memo's invoice line: its own line, a negative amount, no taxes (the memo took it off revenue only). */
+const creditLine = (it) => ({ description: creditLabel(it).slice(0, 1000), quantity_text: "1", unit_price_cents: it.amount_cents, tax_ids: [], billed_ledger_line_ids: [it.line_id] });
+
+/**
+ * Asks whether to apply a customer's unapplied credit memos to the invoice
+ * being written. `done(lines, items)` gets the lines for the ticked ones.
+ */
+function applyCreditsDialog(customerName, currency, credits, done) {
+	const boxes = credits.map((it) => h("input", { type: "checkbox", checked: true, "aria-label": `Apply ${creditLabel(it)}` }));
+	const total = h("strong");
+	const apply = h("button", { type: "button", class: "primary" }, "Apply credits");
+	const update = () => {
+		const c = credits.filter((it, i) => boxes[i].checked);
+		total.textContent = `${c.length} of ${credits.length} selected · ${money(c.reduce((n, i) => n + BigInt(i.amount_cents), 0n), currency)}`;
+		apply.disabled = c.length === 0;
+	};
+	for (const b of boxes) b.onchange = update;
+	apply.onclick = () => {
+		const c = credits.filter((it, i) => boxes[i].checked);
+		closeDialog();
+		done(c.map(creditLine), credits);
+	};
+	const sum = credits.reduce((n, i) => n - BigInt(i.amount_cents), 0n);
+	openDialog(
+		h("h2", {}, "Apply credits?"),
+		h("p", {}, `${customerName} has ${credits.length === 1 ? "an unapplied credit" : `${credits.length} unapplied credits`} of ${money(sum, currency)} in total. Apply ${credits.length === 1 ? "it" : "them"} to this invoice?`),
+		h("p", { class: "hint" }, "Each credit becomes a line of its own, taken off the invoice. You can also add them later with “+ Billable items”."),
+		scroll(
+			h(
+				"table",
+				{},
+				h("thead", {}, h("tr", {}, h("th"), h("th", {}, "Date"), h("th", {}, "Credit"), h("th", { class: "right" }, "Amount"))),
+				h(
+					"tbody",
+					{},
+					credits.map((it, i) =>
+						h("tr", {}, h("td", {}, boxes[i]), h("td", {}, it.date), h("td", {}, it.reference || "Credit memo", it.description ? h("div", { class: "muted" }, it.description) : null), h("td", { class: "num" }, money(it.amount_cents, currency))),
+					),
+				),
+			),
+		),
+		h("p", {}, total),
+		h("div", { class: "actions" }, apply, h("button", { type: "button", onclick: closeDialog }, "Not now")),
+	);
+	update();
+}
+
 async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 	const K = KINDS[kind];
 	const [settings, customers, taxes, cats, existing] = await Promise.all([
@@ -437,6 +486,7 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 	};
 	customerSel.onchange = () => {
 		loadProjects(null).catch(fail);
+		offerCredits();
 		const c = custById.get(customerSel.value);
 		if (c && !existing) cur.value = c.currency;
 		syncDue();
@@ -444,8 +494,36 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 		recalc();
 	};
 	issue.oninput = syncDue;
-	cur.onchange = () => recalc();
+	cur.onchange = () => (recalc(), offerCredits());
 	syncDue();
+
+	// A new invoice for a customer with credit memos not applied yet: offer them, once per
+	// customer and currency (a person who says "Not now" isn't asked again on this form).
+	const offered = new Set();
+	const offerCredits = () => {
+		if (kind !== "invoice" || existing || !customerSel.value) return;
+		const cid = customerSel.value;
+		const currency = cur.value;
+		const key = `${cid}|${currency}`;
+		if (offered.has(key)) return;
+		offered.add(key);
+		api(`/customers/${cid}/billable?${new URLSearchParams({ currency })}`)
+			.then((r) => {
+				// The person may have moved on while this was asked.
+				if (customerSel.value !== cid || cur.value !== currency) return;
+				const onForm = new Set([...linesBody.children].flatMap((tr) => tr._billed ?? []));
+				const credits = r.items.filter((it) => it.credit && !onForm.has(String(it.line_id)));
+				if (!credits.length) return;
+				const c = custById.get(cid);
+				applyCreditsDialog(c?.name ?? "This customer", currency, credits, (lines, items) => {
+					for (const it of items) billableById.set(String(it.line_id), it);
+					for (const l of lines) addLine(l);
+					recalc();
+					flash(`${lines.length} credit${lines.length === 1 ? "" : "s"} applied.`);
+				});
+			})
+			.catch(() => {}); // the "+ Billable items" button still lists them
+	};
 
 	const catOptions = (selected) => [["", "— none —"], ...cats.data.filter((c) => c.active || String(c.id) === String(selected ?? "")).map((c) => [c.id, c.name])];
 	const linesBody = h("tbody");
@@ -549,6 +627,7 @@ async function docForm(kind, idOrNull, qs = new URLSearchParams()) {
 			.catch(() => {});
 	}
 	await loadProjects(doc.project_id ?? null);
+	offerCredits();
 
 	const save = async (btn, then) =>
 		busy(btn, async () => {
@@ -679,9 +758,7 @@ async function billableDialog({ customerId, currency, invoiceId, projectId = nul
 	};
 	tagSel.onchange = from.onchange = to.onchange = () => update();
 	const clear = h("button", { type: "button", class: "link", onclick: () => ((tagSel.value = ""), (from.value = ""), (to.value = ""), update()) }, "Clear filters");
-	const label = (it) => (it.credit ? [`Credit ${it.reference || "memo"}`, it.description, it.date].filter(Boolean).join(" · ") : [it.description || "Billable item", it.date].join(" · "));
-	// A credit memo's credit is its own line, without taxes (the memo took it off revenue only).
-	const creditLine = (it) => ({ description: label(it).slice(0, 1000), quantity_text: "1", unit_price_cents: it.amount_cents, tax_ids: [], billed_ledger_line_ids: [it.line_id] });
+	const label = (it) => (it.credit ? creditLabel(it) : [it.description || "Billable item", it.date].join(" · "));
 	// Costs with rate items in Ledger (tag "rate": what was counted, how many, at what
 	// rate) can fill one line per item instead: its description, quantity and rate.
 	const hasRates = items.some((it) => (it.rates ?? []).length);
