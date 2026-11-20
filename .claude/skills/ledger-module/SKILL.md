@@ -182,7 +182,12 @@ payments to the books.
   clears each billed clearing item into its own account (`it.account_code`),
   so a credit is debited back out. "Applied" is worked out (an invoice that
   isn't void bills `ledger_line_id`), not stored; only an unapplied memo can
-  be voided (reverses its entry). The picker puts each credit on its own
+  be voided (reverses its entry) or edited (`PUT /credit-memos/:id`, 0.20.2:
+  claims the row as "posting", posts the corrected entry, then reverses the
+  old one on the old date; a failed reversal takes the new entry back out;
+  the memo keeps its number and gets the new `journal_entry_id` /
+  `ledger_line_id`, `edited_at`, `edited_by`). `recover()` also finishes an
+  edit cut short: the newest linked entry wins, older ones are reversed. The picker puts each credit on its own
   line with no taxes (`creditLine()` in `ui/app.js`). A new invoice
   (`docForm`, not an existing draft) offers the customer's unapplied
   credits in `applyCreditsDialog()` when the customer is set or the

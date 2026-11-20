@@ -98,3 +98,59 @@ test("a credit memo needs posting to the books on", async () => {
 	creditMemoRoutes(ctx, helpers(ctx));
 	await assert.rejects(call("POST", "/credit-memos", { body: { customer_id: 3, amount: "10" } }), { status: 422, message: /Post invoices and payments to the books/ });
 });
+
+/** A ctx with one open credit memo (id 7, entry 55, clearing line 551), applied on `applied` if given. */
+function editCtx({ applied = null } = {}) {
+	const posted = [];
+	const reversed = [];
+	let row = { id: 7n, number: "CM-0001", customer_id: 3n, memo_date: "2026-11-10", currency: "CAD", amount_cents: 2500n, category_id: null, description: "Damaged tiles", status: "open", journal_entry_id: 55n, ledger_line_id: 551n, customer_name: "Acme", applied_to: applied };
+	const updates = [];
+	const fake = fakeCtx({
+		extra: {
+			settings: { get: async () => ({ post_to_ledger: true, revenue_account_cad: "4000" }), set: async () => {}, onChange() {} },
+			ledger: {
+				clearingAccount,
+				createJournalEntry: async (e) => (posted.push(e), { id: 60, lines: [{ id: 600, account_code: "4000", debit_cents: "4000" }, { id: 601, account_code: "2150", credit_cents: "4000" }] }),
+				getJournalEntry: async (id) => ({ id, reversed_by_id: null }),
+				reverseJournalEntry: async (id, o) => (reversed.push([String(id), o]), { id: 61 }),
+				linkJournalEntry: async () => ({}),
+			},
+		},
+		rowsFor: (sql, params) => {
+			if (sql.includes("entity_active, archived FROM")) return [{ id: 3n, name: "Acme", currency: "CAD", entity_id: 5n, entity_active: true, archived: false }];
+			if (sql.includes("FROM mod_sales.credit_memos m JOIN") && sql.includes("WHERE m.id = $1")) return [row];
+			if (sql.includes("SET status = 'posting'")) return applied ? [] : [{ id: 7n }];
+			if (sql.includes("edited_at = now()")) {
+				updates.push(params);
+				row = { ...row, journal_entry_id: params[1], ledger_line_id: params[2], amount_cents: params[6], description: params[8] };
+			}
+			return null;
+		},
+	});
+	creditMemoRoutes(fake.ctx, helpers(fake.ctx));
+	return { ...fake, posted, reversed, updates };
+}
+
+test("editing an unapplied credit memo posts the corrected entry and reverses the old one, on its date", async () => {
+	const { call, posted, reversed, updates } = editCtx();
+	const res = await call("PUT", "/credit-memos/:id", { params: { id: "7" }, body: { amount: "40.00" } });
+	assert.equal(posted.length, 1);
+	assert.deepEqual(posted[0].lines.map((l) => [l.account_code, String(l.debit_cents ?? 0), String(l.credit_cents ?? 0)]), [["4000", "4000", "0"], ["2150", "0", "4000"]]);
+	assert.equal(posted[0].reference, "CM-0001"); // keeps its number
+	assert.deepEqual(reversed, [["55", { entry_date: "2026-11-10", description: "Credit memo CM-0001 changed" }]]);
+	assert.equal(updates.length, 1);
+	assert.equal(res.ledger_line_id, "601"); // the new clearing line is the billable item now
+	assert.equal(res.description, "Damaged tiles"); // what wasn't given stays
+});
+
+test("an edit that changes nothing posts nothing", async () => {
+	const { call, posted, reversed } = editCtx();
+	await call("PUT", "/credit-memos/:id", { params: { id: "7" }, body: { amount: "25.00", description: "Damaged tiles" } });
+	assert.deepEqual([posted.length, reversed.length], [0, 0]);
+});
+
+test("a credit memo applied on an invoice can't be edited", async () => {
+	const { call, posted } = editCtx({ applied: { id: 9, number: "INV-0009", status: "draft" } });
+	await assert.rejects(call("PUT", "/credit-memos/:id", { params: { id: "7" }, body: { amount: "40.00" } }), { status: 409, message: /applied on invoice INV-0009/ });
+	assert.equal(posted.length, 0);
+});

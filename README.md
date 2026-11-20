@@ -128,6 +128,14 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.20.2**: credit memos can be edited until an invoice takes them.
+  **Edit** on a credit memo changes its customer, date, currency, amount,
+  category or description. An entry in the books can't be changed, so
+  saving posts the corrected credit memo and reverses the old entry (on the
+  old date, so the two cancel out in the same period); the memo keeps its
+  number, and the page shows who last changed it. Once a credit memo is on
+  an invoice, even a draft, it can't be edited: take it off the draft (or
+  delete the draft), or void the issued invoice, first.
 - **0.20.1**: starting a new invoice for a customer who has credit memos
   not applied yet asks whether to apply them: a window lists the credits
   (all ticked), and *Apply credits* adds each as its own line. *Not now*
@@ -398,8 +406,8 @@ secret field in Ledger's form and is never sent back to the browser.
   (a customer's page) posts a credit against that customer's income. To use
   it, start an invoice for them: Sales asks whether to apply their open
   credits. Or click *+ Billable items* on any of their invoices and tick the
-  credit: it is added as a negative line. Void a credit memo that isn't
-  on an invoice to undo it.
+  credit: it is added as a negative line. Until it is on an invoice, a
+  credit memo can be edited (*Edit*: it is reposted) or voided.
 - **Quotes and estimates**: *Email* (or *Mark as sent*), then *Accepted* or
   *Declined*. *Convert to invoice* creates a draft invoice with the same
   lines and tax rates, linked both ways. Sent quotes stay editable until
@@ -428,8 +436,8 @@ login:
   `payments/apply` (apply a deposit the user picked)
 - `credit-memos`: list (`?status=open|applied|void`, `?customer_id=`,
   `?q=`, paged like the documents), create (`customer_id`, `amount`,
-  `memo_date`, `currency`, `category_id`, `description`), read, and
-  `/:id/void`; `customers/:id/billable` lists unapplied ones with
+  `memo_date`, `currency`, `category_id`, `description`), read, update
+  (`PUT`, the same fields, only while no invoice takes it), and `/:id/void`; `customers/:id/billable` lists unapplied ones with
   `credit: true` and a negative `amount_cents`
 - `customers`, `categories`, `taxes`, `settings` (read-only), `numbering`,
   `settings/test-email`, `summary`

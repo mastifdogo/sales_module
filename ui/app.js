@@ -918,12 +918,14 @@ const memoBadge = (m) =>
  * It is posted straight away (Dr revenue / Cr "Customer credits to apply")
  * and then waits among the customer's billable items for an invoice.
  */
-async function creditMemoDialog({ customerId = null } = {}, done = () => {}) {
+async function creditMemoDialog({ customerId = null, memo = null } = {}, done = () => {}) {
 	const [customers, cats, settings] = await Promise.all([api("/customers"), api("/categories"), api("/settings")]);
-	const active = customers.data.filter((c) => !c.archived);
+	if (memo) customerId = memo.customer_id;
+	// Archived customers are left out, except the one an edited memo is already for.
+	const active = customers.data.filter((c) => !c.archived || String(c.id) === String(memo?.customer_id ?? ""));
 	const byId = new Map(active.map((c) => [String(c.id), c]));
 	const custSel = select("customer_id", customerId ?? "", [["", "Choose a customer…"], ...active.map((c) => [String(c.id), c.company ? `${c.name} (${c.company})` : c.name])], { required: true });
-	const cur = select("currency", byId.get(String(customerId ?? ""))?.currency ?? settings.default_currency ?? "CAD", CURRENCY_OPTIONS);
+	const cur = select("currency", memo?.currency ?? byId.get(String(customerId ?? ""))?.currency ?? settings.default_currency ?? "CAD", CURRENCY_OPTIONS);
 	custSel.onchange = () => {
 		const c = byId.get(custSel.value);
 		if (c?.currency) cur.value = c.currency;
@@ -931,27 +933,37 @@ async function creditMemoDialog({ customerId = null } = {}, done = () => {}) {
 	const form = h(
 		"form",
 		{ method: "dialog" },
-		h("h2", {}, "New credit memo"),
-		h("p", { class: "hint" }, "Credits the customer against the income from them: it is posted now (debit revenue, credit Sales' clearing account “Customer credits to apply”) and then appears in their billable items, to take off an invoice."),
+		h("h2", {}, memo ? `Edit credit memo ${memo.number}` : "New credit memo"),
+		h(
+			"p",
+			{ class: "hint" },
+			memo
+				? "Saving posts the corrected credit memo and reverses the old entry (an entry in the books can't be changed). It keeps its number."
+				: "Credits the customer against the income from them: it is posted now (debit revenue, credit Sales' clearing account “Customer credits to apply”) and then appears in their billable items, to take off an invoice.",
+		),
 		field("Customer", custSel),
 		h(
 			"div",
 			{ class: "grid" },
-			field("Date", input("memo_date", todayStr(), { type: "date", required: true })),
+			field("Date", input("memo_date", memo?.memo_date ?? todayStr(), { type: "date", required: true })),
 			field("Currency", cur),
-			field("Amount", input("amount", "", { inputmode: "decimal", placeholder: "0.00", required: true })),
-			field("Category (revenue it comes off)", select("category_id", "", [["", "— default revenue account —"], ...cats.data.filter((c) => c.active).map((c) => [c.id, c.name])])),
+			field("Amount", input("amount", memo ? fmtDec(memo.amount_cents, 2) : "", { inputmode: "decimal", placeholder: "0.00", required: true })),
+			field(
+				"Category (revenue it comes off)",
+				select("category_id", memo?.category_id ?? "", [["", "— default revenue account —"], ...cats.data.filter((c) => c.active || String(c.id) === String(memo?.category_id ?? "")).map((c) => [c.id, c.name])]),
+			),
 		),
-		field("Description", textarea("description", "", { rows: 2, maxlength: 1000, placeholder: "e.g. Refund for the damaged tiles" })),
-		h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Create and post"), h("button", { type: "button", onclick: closeDialog }, "Cancel")),
+		field("Description", textarea("description", memo?.description ?? "", { rows: 2, maxlength: 1000, placeholder: "e.g. Refund for the damaged tiles" })),
+		h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, memo ? "Save and repost" : "Create and post"), h("button", { type: "button", onclick: closeDialog }, "Cancel")),
 	);
 	form.onsubmit = (e) => {
 		e.preventDefault();
 		busy(e.submitter, async () => {
 			const o = formData(form);
-			const saved = await api("/credit-memos", { method: "POST", body: { customer_id: o.customer_id, memo_date: o.memo_date, currency: o.currency, amount: o.amount, category_id: o.category_id || null, description: o.description } });
+			const fields = { customer_id: o.customer_id, memo_date: o.memo_date, currency: o.currency, amount: o.amount, category_id: o.category_id || null, description: o.description };
+			const saved = memo ? await api(`/credit-memos/${memo.id}`, { method: "PUT", body: fields }) : await api("/credit-memos", { method: "POST", body: fields });
 			closeDialog();
-			flash(`Credit memo ${saved.number} posted.`);
+			flash(memo ? `Credit memo ${saved.number} saved.` : `Credit memo ${saved.number} posted.`);
 			done(saved);
 		});
 	};
@@ -1020,6 +1032,7 @@ async function creditMemoView(id) {
 			"div",
 			{ class: "actions" },
 			m.status === "open" && !m.applied_to ? h("a", { class: "button primary", href: `#/invoices/new?customer=${m.customer_id}` }, "Apply on a new invoice") : null,
+			m.status === "open" && !m.applied_to ? act("Edit", () => creditMemoDialog({ memo: m }, reload)) : null,
 			m.status === "open" && !m.applied_to
 				? act("Void", async () => {
 						if (!confirm(`Void credit memo ${m.number}? Its entry is reversed, so the credit comes off the clearing account and back onto revenue.`)) return;
@@ -1052,6 +1065,8 @@ async function creditMemoView(id) {
 				m.journal_entry_id ? ["In the books", h("a", { href: `/journal/${m.journal_entry_id}`, target: "_top" }, `Journal entry #${m.journal_entry_id}`)] : null,
 				m.void_entry_id ? ["Voided by", h("a", { href: `/journal/${m.void_entry_id}`, target: "_top" }, `Journal entry #${m.void_entry_id}`)] : null,
 				["Created by", `${m.created_by} · ${when(m.created_at)}`],
+				m.edited_at ? ["Last changed", `${m.edited_by} · ${when(m.edited_at)}`] : null,
+				m.status === "open" && m.applied_to ? ["Editing", `Applied on invoice ${m.applied_to.number}, so it can't be changed. ${m.applied_to.status === "draft" ? "Take it off that draft (or delete the draft)" : "Void that invoice"} to edit it.`] : null,
 				m.voided_at ? ["Voided", when(m.voided_at)] : null,
 			]
 				.filter(Boolean)
