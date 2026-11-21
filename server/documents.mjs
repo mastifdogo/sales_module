@@ -321,7 +321,7 @@ export function documentRoutes(ctx, h, mail, tags) {
 		}
 		const cur = doc.currency;
 		const receivable = s.accounts?.[cur]?.receivable;
-		if (!receivable) throw bad(`Ledger posting is on, but no receivable account is set for ${cur} (Settings → Sales → Accounts)`);
+		if (!receivable) throw bad(`Ledger posting is on, but there is no ${cur} receivable account: tag one "Accounts receivable" on Ledger's Accounts page, or choose one under Settings → Sales → Accounts`);
 		const [categories, taxes] = await Promise.all([loadCategories(), loadTaxes()]);
 		const credits = new Map(); // account → cents
 		const cleared = new Set();

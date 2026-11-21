@@ -182,3 +182,20 @@ test("the page opens every link the dashboard and the search bar make", async ()
 	}
 	for (const path of ["", "//example.com", "invoices/../x", "javascript:alert(1)", "invoices/31#x"]) assert.ok(!opens.test(path), path);
 });
+
+test("the receivable account: the one chosen, else the account Ledger tagged Accounts receivable", async () => {
+	const { helpers } = await import("../server/common.mjs");
+	const { fakeCtx: shared } = await import("./fake.mjs");
+	const rowsFor = (sql) => (/next_invoice_number/.test(sql) ? [{ next_invoice_number: 1, next_quote_number: 1, next_estimate_number: 1 }] : null);
+	const listAccounts = async () => [
+		{ code: "1200", currency: "CAD", kind: "receivable" },
+		{ code: "1210", currency: "USD", kind: "receivable", is_active: false },
+		{ code: "1000", currency: "CAD", kind: "chequing" },
+	];
+	const settings = (v) => ({ get: async () => v, set: async () => {}, onChange() {} });
+	const load = (v) => helpers(shared({ rowsFor, extra: { ledger: { listAccounts }, settings: settings(v) } }).ctx).loadSettings();
+	assert.equal((await load({ post_to_ledger: true })).accounts.CAD.receivable, "1200");
+	assert.equal((await load({ post_to_ledger: true })).accounts.USD.receivable, ""); // inactive: not used
+	assert.equal((await load({ post_to_ledger: true, receivable_account_cad: "1250" })).accounts.CAD.receivable, "1250");
+	assert.equal((await load({})).accounts.CAD.receivable, ""); // posting off: nothing looked up
+});

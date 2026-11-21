@@ -1,7 +1,7 @@
 {
   "id": "sales",
   "name": "Sales",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "Invoices, quotes, estimates and credit memos with GST and other sales taxes, customer records and sales categories that track to your revenue accounts. Emails PDFs through Ledger's mailbox, files them in Ledger's Documents, puts overdue invoices and follow-ups on the dashboard, and can post invoices and payments to the books.",
   "ledger": ">=0.27.0",
   "server": "server.mjs",
@@ -36,7 +36,7 @@
       { "key": "tax_id_label", "label": "Tax number label", "default": "GST/HST No.", "help": "What the number is called on documents." },
       { "key": "tax_id", "label": "Tax number", "help": "e.g. 123456789RT0001." },
       { "key": "footer", "label": "Footer", "type": "textarea", "help": "Printed at the bottom of every document: payment instructions, a thank-you." },
-      { "key": "post_to_ledger", "label": "Post invoices and payments to the books", "type": "boolean", "tab": "accounts", "default": false, "help": "Issuing an invoice debits receivables and credits revenue and each tax; a payment debits the bank and credits receivables. Off: Sales keeps invoices without touching the books." },
+      { "key": "post_to_ledger", "label": "Post invoices and payments to the books", "type": "boolean", "tab": "accounts", "default": false, "help": "Issuing an invoice debits accounts receivable and credits revenue and each tax; a payment debits the bank and credits receivables. Receivables left empty below: the account Ledger has tagged Accounts receivable. Off: Sales keeps invoices without touching the books." },
       { "key": "h_accounts_cad", "label": "Canadian dollars", "type": "heading", "tab": "accounts", "show_if": {"key": "post_to_ledger", "equals": true} },
       { "key": "receivable_account_cad", "label": "Receivables", "type": "account", "tab": "accounts", "currency": "CAD", "account_types": ["asset"], "show_if": {"key": "post_to_ledger", "equals": true} },
       { "key": "revenue_account_cad", "label": "Revenue", "type": "account", "tab": "accounts", "currency": "CAD", "account_types": ["revenue"], "help": "For lines with no category, or a category with no account in this currency.", "show_if": {"key": "post_to_ledger", "equals": true} },

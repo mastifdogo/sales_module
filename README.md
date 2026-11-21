@@ -88,7 +88,9 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   billable costs by project, with what's quoted, invoiced, paid and owed.
 - **find things from Ledger's search bar**: customers, and invoices, quotes
   and estimates by number, customer or PO number.
-- optionally **post to the books**: issuing an invoice posts Dr receivable,
+- optionally **post to the books**: issuing an invoice posts Dr accounts
+  receivable (the account chosen in the settings, or else the one tagged
+  "Accounts receivable" in Ledger, 0.30.0 and later),
   Cr each line's category revenue account and Cr each tax's payable account.
   A payment posts Dr bank / Cr receivable. Voiding an invoice or removing a
   payment reverses its entry. Quotes and estimates are never posted.
@@ -128,6 +130,10 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.22.0**: invoices are posted to accounts receivable without choosing
+  the account: with posting on and no receivables account chosen under
+  Settings → Sales → Accounts, the account tagged "Accounts receivable" in
+  Ledger (0.30.0 and later) in the invoice's currency is used.
 - **0.21.0**: linked entries (Ledger 0.28.0). An invoice's journal entry is
   linked to the entries of the costs and credit memos it bills, so opening
   either in Ledger shows the other; voiding the invoice takes the links off.

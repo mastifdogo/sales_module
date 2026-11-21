@@ -119,6 +119,12 @@ export function helpers(ctx) {
 			const c = cur.toLowerCase();
 			accounts[cur] = { receivable: str(`receivable_account_${c}`), revenue: str(`revenue_account_${c}`), bank: str(`bank_account_${c}`) };
 		}
+		// Invoices are posted to accounts receivable: with no account chosen here, the one Ledger
+		// has tagged "Accounts receivable" in that currency is used (Ledger 0.30.0 tags it).
+		if (v.post_to_ledger === true && CURRENCIES.some((cur) => !accounts[cur].receivable) && typeof ctx.ledger.listAccounts === "function") {
+			const tagged = (await ctx.ledger.listAccounts()).filter((a) => a.kind === "receivable" && a.is_active !== false);
+			for (const cur of CURRENCIES) if (!accounts[cur].receivable) accounts[cur].receivable = tagged.find((a) => a.currency === cur)?.code ?? "";
+		}
 		return {
 			...counters.rows[0],
 			business_name: str("business_name"),
