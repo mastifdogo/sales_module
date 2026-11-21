@@ -252,3 +252,32 @@ test("an invoice tagged paid in Ledger is left out of the open and overdue lists
 	assert.match(await where("overdue"), /d\.status = 'open' AND NOT d\.paid_by_tag AND d\.due_date < \$4::date/);
 	assert.match(await where("paid"), /\(d\.status = 'paid' OR \(d\.status = 'open' AND d\.paid_by_tag\)\)/);
 });
+
+test("linked entries: an invoice's entry is linked to the entries it bills, and unlinked when it is void", async () => {
+	const linked = [];
+	const { ctx, queries } = fakeCtx({
+		extra: {
+			ledger: {
+				relateEntries: async (a, b, opts) => linked.push(["relate", a, b, opts.note]),
+				unrelateEntries: async (a, b) => linked.push(["unrelate", a, b]),
+			},
+		},
+		rowsFor: (sql) => {
+			if (!sql.includes("coalesce(d.related_entry_ids, '{}')::text[] AS have")) return null;
+			return [
+				// Issued: bills entries 70 and 71, nothing linked yet. Void: was linked to 80.
+				{ id: 8n, number: "INV-0008", entry: "40", have: [], want: ["70", "71"] },
+				{ id: 9n, number: "INV-0009", entry: "41", have: ["80"], want: [] },
+			];
+		},
+	});
+	await register(ctx);
+	await settle();
+	assert.deepEqual(linked, [
+		["relate", "40", "70", "Billed on invoice INV-0008"],
+		["relate", "40", "71", "Billed on invoice INV-0008"],
+		["unrelate", "41", "80"],
+	]);
+	const saved = queries.filter((x) => x.sql.includes("SET related_entry_ids = $2::bigint[] WHERE id = $1")).map((x) => x.params);
+	assert.deepEqual(saved, [["8", ["70", "71"]], ["9", []]]);
+});

@@ -239,6 +239,14 @@ payments to the books.
   them, and "paid" while that invoice is paid (`documents.paid_entry_ids`,
   `syncBillablePaid()` in `tags.mjs`). Sales only takes off a tag it set
   itself, and not while another invoice still holds the entry.
+- Linked entries (Ledger 0.28.0, feature-detected: `ctx.ledger.relateEntries`,
+  so `"ledger"` stays lower): `syncRelated()` in `tags.mjs`, run after
+  `syncBillable()`. An issued invoice's entry is linked to
+  `billed_entry_ids` (billed costs, applied credit memos) with
+  `relateEntries`, kept in `documents.related_entry_ids` (NULL: not worked
+  out, which is also the backfill); void unlinks. Payments, matched
+  deposits and reversals need no link: they share `invoice:<id>`, which
+  Ledger already shows together.
 - Root mode (Ledger 0.21.1): `server/root.mjs`. With `req.user.root`,
   `DELETE /root/documents/:id`, `PATCH /root/documents/:id` (listed columns
   only), `DELETE /root/payments/:id` (and the invoice's paid_cents/status

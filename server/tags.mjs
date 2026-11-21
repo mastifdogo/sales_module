@@ -157,6 +157,41 @@ export function entryTags(ctx, h) {
 	}
 
 	/**
+	 * Links an issued invoice's entry to the entries of the costs and credit
+	 * memos it bills (Ledger 0.28.0), so each shows on the other's page, and
+	 * takes the links off again when the invoice is void. Also brings invoices
+	 * from before 0.21.0 in line the first time it runs.
+	 */
+	async function syncRelated(did, user) {
+		if (typeof ctx.ledger?.relateEntries !== "function") return;
+		const { rows } = await q(
+			`SELECT * FROM (
+				SELECT d.id, d.number, d.journal_entry_id::text AS entry, coalesce(d.related_entry_ids, '{}')::text[] AS have,
+				       CASE WHEN d.status IN ('open', 'paid') THEN d.billed_entry_ids ELSE '{}' END::text[] AS want
+				  FROM ${T("documents")} d
+				 WHERE d.kind = 'invoice' AND d.journal_entry_id IS NOT NULL AND d.billed_entry_ids IS NOT NULL
+				   AND ($1::bigint IS NULL OR d.id = $1::bigint)
+				   AND (cardinality(d.billed_entry_ids) > 0 OR cardinality(d.related_entry_ids) > 0)
+			) x
+			WHERE NOT (x.want @> x.have AND x.have @> x.want)
+			ORDER BY x.id LIMIT ${MAX_PER_SYNC}`,
+			[did],
+		);
+		for (const r of rows) {
+			try {
+				for (const entry of r.have) if (!r.want.includes(entry) && entry !== r.entry) await ctx.ledger.unrelateEntries(r.entry, entry);
+				for (const entry of r.want) {
+					if (!r.have.includes(entry) && entry !== r.entry) await ctx.ledger.relateEntries(r.entry, entry, { note: `Billed on invoice ${r.number}`.slice(0, 200) }, user);
+				}
+				await q(`UPDATE ${T("documents")} SET related_entry_ids = $2::bigint[] WHERE id = $1`, [String(r.id), r.want]);
+			} catch (e) {
+				// An entry may be gone for a while (root mode); the next sync tries again.
+				warnOnce(`related:${r.id}`, "could not link an invoice's journal entry to the entries it bills", { invoice: r.number, err: e.message });
+			}
+		}
+	}
+
+	/**
 	 * Tags the entries of billable items "paid" while the invoice that bills
 	 * them is paid (payments in Sales, or its entry tagged paid in Ledger), and
 	 * takes it off again when the invoice is unpaid or void.
@@ -344,6 +379,7 @@ export function entryTags(ctx, h) {
 				try {
 					await syncInvoices(one, user);
 					await syncBillable(one, user);
+					await syncRelated(one, user);
 				} catch (e) {
 					ctx.log.warn("could not sync Ledger's tags", { err: e.message });
 				}

@@ -128,6 +128,12 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.21.0**: linked entries (Ledger 0.28.0). An invoice's journal entry is
+  linked to the entries of the costs and credit memos it bills, so opening
+  either in Ledger shows the other; voiding the invoice takes the links off.
+  Invoices issued before are linked the first time it runs. Payments and
+  matched deposits already show with their invoice. Does nothing on an
+  older Ledger.
 - **0.20.2**: credit memos can be edited until an invoice takes them.
   **Edit** on a credit memo changes its customer, date, currency, amount,
   category or description. An entry in the books can't be changed, so
