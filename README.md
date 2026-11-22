@@ -135,6 +135,8 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.23.1**: bank and credit card accounts (tagged chequing, savings or
+  credit card in Ledger) come first in every account list, then the rest.
 - **0.23.0**: customers' own accounts (Ledger 0.31.0). Ledger now keeps an
   account for each customer under Accounts receivable, and what a customer
   owes is its balance. Sales posts there: an invoice debits the customer's

@@ -2186,7 +2186,13 @@ function accountTree(list) {
 function accountSelect(name, accounts, cur, types, value) {
 	let list = accounts.filter((a) => a.currency === cur && types.includes(a.type));
 	if (!list.length) list = accounts.filter((a) => a.currency === cur);
-	const opts = [["", "— none —"], ...accountTree(list).map(({ a, depth }) => [a.code, `${"\u00a0\u00a0\u00a0".repeat(depth)}${a.code} ${a.name}`])];
+	// Bank and credit card accounts come first, then the rest as a tree.
+	const isBank = (a) => a.kind === "chequing" || a.kind === "savings" || a.kind === "credit_card";
+	const opts = [
+		["", "— none —"],
+		...list.filter(isBank).map((a) => [a.code, `${a.code} ${a.name}`]),
+		...accountTree(list.filter((a) => !isBank(a))).map(({ a, depth }) => [a.code, `${"\u00a0\u00a0\u00a0".repeat(depth)}${a.code} ${a.name}`]),
+	];
 	if (value && !opts.some(([v]) => v === value)) opts.push([value, value]);
 	opts.push([NEW_ACCOUNT, "+ New account…"]);
 	const sel = select(name, value ?? "", opts);
