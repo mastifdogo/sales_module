@@ -1535,6 +1535,8 @@ function paymentDialog(doc, done) {
 // ---- customers -------------------------------------------------------------------------------
 
 const outstandingText = (list) => (list?.length ? list.map((o) => money(o.cents, o.currency)).join(", ") : "—");
+/** What the customer owes by Ledger's own count (their own account per currency, Ledger ≥ 0.31.0); "" when there is none. */
+const ledgerOwedText = (list) => (list?.length ? list.map((o) => `${money(o.cents, o.currency)} (account ${o.account_code})`).join(", ") : "");
 
 async function customerList() {
 	const tbody = h("tbody");
@@ -1823,6 +1825,7 @@ async function customerView(id) {
 		["Terms", c.terms_days !== null ? `${c.terms_days} days` : "default"],
 		["Taxes", taxNames],
 		["Outstanding", outstandingText(c.outstanding)],
+		["Owed in the books", ledgerOwedText(c.ledger_owed)],
 	].filter(([, v]) => v);
 	const openInvoices = c.documents
 		.filter((d) => d.kind === "invoice" && d.status === "open" && !d.paid_by_tag)

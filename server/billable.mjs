@@ -137,7 +137,8 @@ export function billableItems(ctx, h) {
 				out.problems.push(`Billable items account ${code} doesn't exist in Ledger (Settings → Sales).`);
 				continue;
 			}
-			if (acct.currency !== currency || acct.module_id === "ledger") continue; // never Ledger's own (Unreconciled)
+			// Never Ledger's own (Unreconciled), nor a customer's or vendor's own account (what they owe, not a cost).
+			if (acct.currency !== currency || acct.module_id === "ledger" || acct.entity) continue;
 			// The credit memos' account holds credits (to take off an invoice); the others, costs.
 			const isCredit = credit !== null && code === credit.code;
 			for (let page = 0; page < MAX_PAGES; page++) {

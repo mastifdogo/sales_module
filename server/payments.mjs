@@ -386,20 +386,36 @@ export function paymentRoutes(ctx, h, docs) {
 
 	/**
 	 * What to post when a deposit already in the books pays an invoice. The
-	 * deposit debited the bank and credited some account. If that was the
-	 * receivable account, or the invoice was never posted, nothing more is
-	 * needed; otherwise move the amount from that account to receivable.
+	 * deposit debited the bank and credited some account. `target` is the
+	 * account the invoice's receivable line sits in (the customer's own on
+	 * Ledger ≥ 0.31.0). If the deposit was credited there, or the invoice was
+	 * never posted, nothing more is needed ("none"); so too when it was
+	 * credited to a customer's own account (the books already say who paid).
+	 * Otherwise the amount is moved from that account to `target`:
+	 * { from, receivable, plain }. `plain`: the deposit sits in Ledger's tagged
+	 * Accounts receivable, with no customer; the move is then posted without
+	 * the customer as its entity, because Ledger would send both of its lines
+	 * to the customer's own account and nothing would move (the credit to the
+	 * customer's account already says whose the entry is).
 	 */
-	function postingFor(entry, lineId, invoice, s) {
+	async function postingFor(entry, lineId, invoice, s, target) {
 		const line = entry.lines.find((l) => String(l.id) === String(lineId));
-		const receivable = s.accounts?.[invoice.currency]?.receivable;
 		if (invoice.journal_entry_id === null || !s.post_to_ledger) return "none";
-		if (!receivable) throw bad(`Set the ${invoice.currency} receivable account under Settings → Sales first`);
+		const receivable = s.accounts?.[invoice.currency]?.receivable;
+		if (!target) throw bad(`Set the ${invoice.currency} receivable account under Settings → Sales first`);
 		const credits = entry.lines.filter((l) => l.currency === line.currency && BigInt(l.credit_cents ?? 0) > 0n);
-		if (credits.some((l) => l.account_code === receivable)) return "none";
 		const accounts = [...new Set(credits.map((l) => l.account_code))];
-		if (accounts.length !== 1) throw conflict("That deposit was split across several accounts; record the payment on the invoice by hand.");
-		return { from: accounts[0], receivable };
+		if (accounts.includes(target)) return "none";
+		if (accounts.length !== 1) {
+			if (receivable && accounts.includes(receivable)) return "none";
+			throw conflict("That deposit was split across several accounts; record the payment on the invoice by hand.");
+		}
+		const from = await ctx.ledger.getAccount(accounts[0]).catch(() => null);
+		if (!from) throw conflict(`The account that deposit was credited to (${accounts[0]}) no longer exists; record the payment on the invoice by hand.`);
+		// Never post to Ledger's own accounts (its Unreconciled clearing account, Ledger ≥ 0.20.2).
+		if (from.module_id === "ledger") throw conflict(`That deposit sits in Ledger's ${from.name} account. Move it on in Ledger (Reconcile) first, then apply it here.`);
+		if (from.entity?.role === "customer") return "none";
+		return { from: accounts[0], receivable: target, plain: typeof ctx.entities?.account === "function" && from.kind === "receivable" };
 	}
 
 	/** Applies a deposit that's already in the books to open invoices; returns what's left of it. */
@@ -429,13 +445,11 @@ export function paymentRoutes(ctx, h, docs) {
 		const sum = allocs.reduce((t, a) => t + a.cents, 0n);
 		if (sum > remaining) throw bad(`that's more than the ${formatMoney(remaining, line.currency)} of this deposit not yet applied`);
 
-		// Never post to Ledger's own accounts (its Unreconciled clearing account, Ledger ≥ 0.20.2).
+		// What each allocation posts, worked out (and refused) before anything is recorded.
+		const postings = new Map();
 		for (const a of allocs) {
-			const p = postingFor(entry, line.id, a.invoice, s);
-			if (p === "none") continue;
-			const from = await ctx.ledger.getAccount(p.from).catch(() => null);
-			if (!from) throw conflict(`The account that deposit was credited to (${p.from}) no longer exists; record the payment on the invoice by hand.`);
-			if (from.module_id === "ledger") throw conflict(`That deposit sits in Ledger's ${from.name} account. Move it on in Ledger (Reconcile) first, then apply it here.`);
+			const target = a.invoice.journal_entry_id === null || !s.post_to_ledger ? "" : await docs.receivableOf(a.invoice.id);
+			postings.set(String(a.invoice.id), await postingFor(entry, line.id, a.invoice, s, target));
 		}
 
 		const details = {
@@ -449,11 +463,12 @@ export function paymentRoutes(ctx, h, docs) {
 		const done = [];
 		try {
 			for (const a of allocs) {
-				const p = postingFor(entry, line.id, a.invoice, s);
+				const p = postings.get(String(a.invoice.id));
 				const posting =
 					p === "none"
 						? "none"
 						: {
+								plain: p.plain,
 								lines: [
 									{ account_code: p.from, debit_cents: a.cents, memo: `Deposit (entry #${entry.id}) applied to invoice ${a.invoice.number}` },
 									{ account_code: p.receivable, credit_cents: a.cents, memo: `Payment on invoice ${a.invoice.number}` },

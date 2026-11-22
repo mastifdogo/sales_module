@@ -5,7 +5,9 @@
 //   invoice:          draft → open → paid, or open → void. Issuing posts it to
 //                     the books when ledger posting is on (Dr receivable,
 //                     Cr revenue per category and each tax); payments post
-//                     Dr bank / Cr receivable; voiding reverses.
+//                     Dr bank / Cr receivable; voiding reverses. "Receivable"
+//                     is the customer's own account under accounts receivable
+//                     on Ledger ≥ 0.31.0 (receivables.mjs).
 //   quote, estimate:  draft → sent → accepted or declined; "convert" turns
 //                     one into a draft invoice. Never posted to the books.
 
@@ -13,6 +15,7 @@ import { addDays, computeTotals, formatDecimal, formatMoney, MAX_CENTS, today } 
 import { renderDocumentPdf } from "../lib/pdf.mjs";
 import { isNotFound, KINDS } from "./common.mjs";
 import { billableItems } from "./billable.mjs";
+import { receivables } from "./receivables.mjs";
 import { openLink } from "./search.mjs";
 
 const MAX_LINES = 200;
@@ -66,6 +69,7 @@ export function extractionOf(doc) {
 export function documentRoutes(ctx, h, mail, tags) {
 	const { T, q, bad, notFound, conflict, body, text, dateField, currency, decimal, id, isId, idList, like, loadSettings, CUSTOMERS, TAX_ACCOUNTS, CATEGORY_ACCOUNTS } = h;
 	const billable = billableItems(ctx, h);
+	const receivable = receivables(ctx, h);
 
 	/**
 	 * Makes Sales' billable-costs clearing account for each currency in use
@@ -307,8 +311,11 @@ export function documentRoutes(ctx, h, mail, tags) {
 
 	// ---- invoice posting --------------------------------------------------------------
 
-	/** The ledger lines for an invoice: Dr receivable; Cr revenue per category account and each tax's account. */
-	async function postingLines(doc, totals, s) {
+	/**
+	 * The ledger lines for an invoice: Dr receivable (`receivableCode`: the customer's own
+	 * account, or the receivables account); Cr revenue per category account and each tax's account.
+	 */
+	async function postingLines(doc, totals, s, receivableCode) {
 		// Billed items that came from one of Sales' clearing accounts: their
 		// amount goes back to that account (clearing it); the rest of the line is
 		// revenue. A cost is credited back to "Billable costs to recharge"; a
@@ -320,8 +327,7 @@ export function documentRoutes(ctx, h, mail, tags) {
 			for (const it of items) if (it.clearing) fromClearing.set(String(it.line_id), { code: it.account_code, cents: BigInt(it.amount_cents), credit: it.credit === true });
 		}
 		const cur = doc.currency;
-		const receivable = s.accounts?.[cur]?.receivable;
-		if (!receivable) throw bad(`Ledger posting is on, but there is no ${cur} receivable account: tag one "Accounts receivable" on Ledger's Accounts page, or choose one under Settings → Sales → Accounts`);
+		if (!receivableCode) throw bad(`Ledger posting is on, but there is no ${cur} receivable account: tag one "Accounts receivable" on Ledger's Accounts page, or choose one under Settings → Sales → Accounts`);
 		const [categories, taxes] = await Promise.all([loadCategories(), loadTaxes()]);
 		const credits = new Map(); // account → cents
 		const cleared = new Set();
@@ -354,7 +360,7 @@ export function documentRoutes(ctx, h, mail, tags) {
 			add(acct, t.tax_cents, t.name);
 		}
 		const memo = `Invoice ${doc.number}`;
-		const lines = [{ account_code: receivable, debit_cents: totals.total, memo }];
+		const lines = [{ account_code: receivableCode, debit_cents: totals.total, memo }];
 		for (const [acct, { cents, memo: what }] of credits) {
 			if (cents > 0n) lines.push({ account_code: acct, credit_cents: cents, memo: `${what} – ${memo}` });
 			else if (cents < 0n) lines.push({ account_code: acct, debit_cents: -cents, memo: `${what} – ${memo}` });
@@ -490,6 +496,9 @@ export function documentRoutes(ctx, h, mail, tags) {
 			throw conflict(doc.status === "posting" ? "this invoice is being issued right now" : `invoice ${doc.number} is already issued`);
 		}
 		let entryId = null;
+		// What Sales knows the entry to say from the moment it is posted: whose it is, when its
+		// receivable line is in the customer's own account (no "customer" tag is set then).
+		let known = [];
 		try {
 			const doc = await getDocument(did, "invoice");
 			const totals = computeTotals(doc.lines);
@@ -504,31 +513,36 @@ export function documentRoutes(ctx, h, mail, tags) {
 				throw conflict(`invoice ${doc.number} can't be issued as it is (edit the draft): ${e.message}`);
 			}
 			if (s.post_to_ledger) {
+				// The customer's own account under accounts receivable (Ledger ≥ 0.31.0), else receivables.
+				const to = await receivable.forNew(doc, s);
 				const entry = await ctx.ledger.createJournalEntry(
 					{
 						entry_date: doc.issue_date,
 						description: `Invoice ${doc.number} – ${doc.customer.name}`.slice(0, 500),
 						reference: doc.number.slice(0, 100),
-						lines: await postingLines(doc, totals, s),
+						lines: await postingLines(doc, totals, s, to.code),
 						links: [invoiceLink(doc)],
 						...entityOf(doc),
 					},
 					user,
 				);
 				entryId = String(entry.id);
+				// The account says whose the entry is (read back from what was posted).
+				if (to.own && (entry.lines ?? []).some((l) => l.account_code === to.code)) known = [`customer:${Number(doc.customer.entity_id)}`];
 			}
 			await q(
 				`UPDATE ${T("documents")} SET status = 'open', journal_entry_id = $2, issued_at = now(), updated_at = now(),
-				        subtotal_cents = $3, tax_cents = $4, total_cents = $5
+				        subtotal_cents = $3, tax_cents = $4, total_cents = $5, entry_tags = $6::text[]
 				  WHERE id = $1`,
-				[did, entryId, totals.subtotal.toString(), totals.tax.toString(), totals.total.toString()],
+				[did, entryId, totals.subtotal.toString(), totals.tax.toString(), totals.total.toString(), known],
 			);
 		} catch (e) {
 			if (entryId === null) await q(`UPDATE ${T("documents")} SET status = 'draft' WHERE id = $1 AND status = 'posting'`, [did]);
 			throw e;
 		}
 		ctx.log.info("invoice issued", { document: did, entry: entryId, user: user.username });
-		// Ledger's shared tags: customer and billed on its entry, billed on the costs it bills.
+		// Ledger's shared tags: billed on its entry (and the customer, unless the account already
+		// says whose it is), billed on the costs it bills.
 		await tags.sync(did, user);
 		const issued = await getDocument(did);
 		await filePdf(issued, renderDocumentPdf(issued, s), user);
@@ -552,10 +566,12 @@ export function documentRoutes(ctx, h, mail, tags) {
 	/**
 	 * Records a payment on an open invoice and raises what's paid on it.
 	 * `posting` says what goes into the books:
-	 *   "bank" (default): Dr bank / Cr receivable, when ledger posting is on and
-	 *     the invoice was posted;
-	 *   { lines }: these journal lines instead (e.g. moving a matched bank
-	 *     deposit out of a clearing account into receivable);
+	 *   "bank" (default): Dr bank / Cr receivable (the account the invoice's
+	 *     receivable line sits in: the customer's own on Ledger ≥ 0.31.0), when
+	 *     ledger posting is on and the invoice was posted;
+	 *   { lines, plain? }: these journal lines instead (e.g. moving a matched bank
+	 *     deposit out of a clearing account into receivable); `plain`: posted
+	 *     without the customer as the entry's entity (the lines say whose it is);
 	 *   "none": nothing (the money is already in the books).
 	 * `matched` links the payment to a bank deposit already in the books.
 	 * Returns the payment id; on failure nothing is left behind.
@@ -573,10 +589,11 @@ export function documentRoutes(ctx, h, mail, tags) {
 		const memo = `Payment on invoice ${before.number}`;
 		if (posting === "bank" && s.post_to_ledger && before.journal_entry_id !== null) {
 			const accounts = s.accounts?.[before.currency] ?? {};
-			if (!accounts.receivable || !accounts.bank) throw bad(`Ledger posting is on, but the ${before.currency} receivable and bank accounts aren't both set (Settings → Sales)`);
+			const to = await receivable.ofInvoice(before, s);
+			if (!to || !accounts.bank) throw bad(`Ledger posting is on, but the ${before.currency} receivable and bank accounts aren't both set (Settings → Sales)`);
 			lines = [
 				{ account_code: accounts.bank, debit_cents: amount, memo },
-				{ account_code: accounts.receivable, credit_cents: amount, memo },
+				{ account_code: to, credit_cents: amount, memo },
 			];
 		} else if (posting && typeof posting === "object") {
 			lines = posting.lines.map((l) => ({ ...l, memo: l.memo ?? memo }));
@@ -619,7 +636,7 @@ export function documentRoutes(ctx, h, mail, tags) {
 		if (lines) {
 			try {
 				const entry = await ctx.ledger.createJournalEntry(
-					{ entry_date: date, description: `${memo} – ${before.customer.name}`.slice(0, 500), reference: (reference || before.number).slice(0, 100), lines, links: [invoiceLink(before, "Payment on invoice")], ...entityOf(before) },
+					{ entry_date: date, description: `${memo} – ${before.customer.name}`.slice(0, 500), reference: (reference || before.number).slice(0, 100), lines, links: [invoiceLink(before, "Payment on invoice")], ...(posting?.plain === true ? {} : entityOf(before)) },
 					user,
 				);
 				await q(`UPDATE ${T("payments")} SET journal_entry_id = $2 WHERE id = $1`, [pid, String(entry.id)]);
@@ -1044,6 +1061,8 @@ ${paras}
 		recordPayment,
 		deletePayment,
 		getDocument,
+		/** The account an issued invoice's receivable line sits in (where a payment on it is credited). */
+		receivableOf: async (did) => receivable.ofInvoice(await getDocument(did, "invoice"), await loadSettings()),
 		makeClearingAccounts,
 		/**
 		 * An invoice left in "posting" means Ledger stopped mid-issue. Issuing

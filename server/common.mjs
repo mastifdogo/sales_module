@@ -2,6 +2,7 @@
 // the module settings. Everything here is built from the module's ctx.
 
 import { isDate, parseDecimal } from "../lib/money.mjs";
+import { isReceivable } from "./receivables.mjs";
 
 export const CURRENCIES = ["CAD", "USD"];
 
@@ -117,13 +118,19 @@ export function helpers(ctx) {
 		const accounts = {};
 		for (const cur of CURRENCIES) {
 			const c = cur.toLowerCase();
-			accounts[cur] = { receivable: str(`receivable_account_${c}`), revenue: str(`revenue_account_${c}`), bank: str(`bank_account_${c}`) };
+			accounts[cur] = { receivable: str(`receivable_account_${c}`), receivable_tagged: false, revenue: str(`revenue_account_${c}`), bank: str(`bank_account_${c}`) };
 		}
 		// Invoices are posted to accounts receivable: with no account chosen here, the one Ledger
 		// has tagged "Accounts receivable" in that currency is used (Ledger 0.30.0 tags it).
-		if (v.post_to_ledger === true && CURRENCIES.some((cur) => !accounts[cur].receivable) && typeof ctx.ledger.listAccounts === "function") {
-			const tagged = (await ctx.ledger.listAccounts()).filter((a) => a.kind === "receivable" && a.is_active !== false);
-			for (const cur of CURRENCIES) if (!accounts[cur].receivable) accounts[cur].receivable = tagged.find((a) => a.currency === cur)?.code ?? "";
+		// `receivable_tagged`: the account is Ledger's tagged one (or was chosen and is tagged, or
+		// is a customer's own): customers' own accounts sit under it (Ledger 0.31.0, receivables.mjs).
+		if (v.post_to_ledger === true && typeof ctx.ledger.listAccounts === "function") {
+			const all = await ctx.ledger.listAccounts();
+			const tagged = all.filter((a) => a.kind === "receivable" && a.is_active !== false);
+			for (const cur of CURRENCIES) {
+				if (!accounts[cur].receivable) accounts[cur].receivable = tagged.find((a) => a.currency === cur)?.code ?? "";
+				accounts[cur].receivable_tagged = accounts[cur].receivable !== "" && isReceivable(all.find((a) => a.code === accounts[cur].receivable));
+			}
 		}
 		return {
 			...counters.rows[0],
@@ -183,6 +190,8 @@ export function helpers(ctx) {
 		}
 		if (a.currency !== cur) throw bad(`${field}: account ${code} is in ${a.currency}, not ${cur}`);
 		if (!a.is_active) throw bad(`${field}: account ${code} is inactive`);
+		// A customer's or vendor's own account (Ledger 0.31.0) holds what they owe or are owed, never a sale or a tax.
+		if (a.entity) throw bad(`${field}: account ${code} is ${a.entity.name}'s own account; choose another`);
 	}
 
 	/** {"CAD": "4000", "USD": ""} → validated map with only the set currencies. */

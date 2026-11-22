@@ -67,8 +67,9 @@ export function settingsRoutes(ctx, h, mail) {
 
 	ctx.route("GET", "/accounts", async () => {
 		// Hidden accounts (clearing accounts, unless a person shows them; Ledger
-		// ≥ 0.20.1) and Ledger's own (its Unreconciled account) stay out of pickers.
-		const accounts = (await ctx.ledger.listAccounts()).filter((a) => !a.hidden && a.module_id !== "ledger");
+		// ≥ 0.20.1), Ledger's own (its Unreconciled account) and customers' and vendors'
+		// own accounts (Ledger ≥ 0.31.0) stay out of pickers.
+		const accounts = (await ctx.ledger.listAccounts()).filter((a) => !a.hidden && a.module_id !== "ledger" && !a.entity);
 		return { data: accounts.map((a) => ({ code: a.code, name: a.name, type: a.type, currency: a.currency, parent_code: a.parent_code ?? null, kind: a.kind ?? null })) };
 	});
 

@@ -3,10 +3,12 @@
 import { today } from "../lib/money.mjs";
 import { isEmail, parseAddressList } from "../lib/mail.mjs";
 import { customerStore } from "./customer-store.mjs";
+import { receivables } from "./receivables.mjs";
 
 export function customerRoutes(ctx, h) {
 	const { T, q, bad, notFound, conflict, body, text, intIn, bool, currency, id, like, checkTaxIds, CUSTOMERS } = h;
 	const store = customerStore(ctx, h);
+	const receivable = receivables(ctx, h);
 
 	/** The form's fields split into what's shared in Ledger's list and what's Sales' own. */
 	const split = (c) => {
@@ -106,7 +108,10 @@ export function customerRoutes(ctx, h) {
 			  WHERE d.customer_id = $1 ORDER BY p.payment_date DESC, p.id DESC`,
 			[c.id],
 		);
-		return { ...c, documents: docs, payments: payments.rows };
+		// What they owe by Ledger's own count: the balance of their own account in each currency
+		// (Ledger ≥ 0.31.0; null on an older one). It also counts what was posted outside Sales.
+		const ledger_owed = await receivable.owed(c.entity_id);
+		return { ...c, documents: docs, payments: payments.rows, ledger_owed };
 	});
 
 	ctx.route("PUT", "/customers/:id", async (req) => {

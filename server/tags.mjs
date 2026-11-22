@@ -1,7 +1,19 @@
 // Ledger's shared tags on journal entries (Ledger ≥ 0.23.0, ctx.tags). Sales
 // keeps them true on the entry of every issued invoice:
 //
-//   customer  the customer's entity, while the invoice has one in Ledger's list;
+//   customer  the customer's entity, while the invoice has one in Ledger's list.
+//             On Ledger ≥ 0.31.0 an invoice is posted to the customer's own
+//             account under accounts receivable, and Ledger reads this tag
+//             from that account: Sales then sets none, and only records
+//             ("customer:<entity id>" in documents.entry_tags, at issue) that
+//             the entry says whose it is. Ledger's update did the same for
+//             the invoices already there (line moved, tag deleted), which
+//             entry_tags still describes, so nothing is set or removed for
+//             them. The tag is still set where Sales doesn't know the entry
+//             to say so: there Ledger moves a line left in accounts
+//             receivable to the customer's account, or keeps a real tag when
+//             the entry has no such line (a receivables account of the
+//             user's own that Ledger hasn't tagged; an older Ledger);
 //   billed    while the invoice is issued (open or paid), not once it is void;
 //   paid      while it is paid in full;
 //   overdue   while it is open, unpaid and past its due date.

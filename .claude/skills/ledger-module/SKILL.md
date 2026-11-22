@@ -141,7 +141,8 @@ payments to the books.
 
 - Layout: `server.mjs` registers the route files in `server/` (`catalog`,
   `customers`, `documents`, `email`, `settings`, `search`, `dashboard`,
-  `move-settings`, `common`, `tags`, `payments`, `projects`, `root`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
+  `move-settings`, `common`, `tags`, `payments`, `projects`, `root`,
+  `receivables`); `lib/` has `money.mjs`, `pdf.mjs` (PDF
   generation, no dependencies) and `mail.mjs` (its own SMTP client). Tests:
   `test/*.test.mjs` (`npm test`), with the stand-in Ledger in `test/fake.mjs`.
 - Needs Ledger ≥ 0.27.0 (the one file store, file tags, extracted data).
@@ -152,6 +153,57 @@ payments to the books.
   `accounts: { CAD, USD }`, built in SQL (`h.TAX_ACCOUNTS`,
   `h.CATEGORY_ACCOUNTS`) and written with `h.accountColumns()`. Never put a
   code in JSON or cache one.
+- Receivables are tracked by the customer's own account (0.23.0, Ledger
+  0.31.0, feature-detected: `typeof ctx.entities?.account === "function"`,
+  so `"ledger"` stays lower; `server/receivables.mjs`). Never compare a
+  posted line's account code with the receivable setting; a receivable
+  account is `isReceivable(a)`: `a.kind === "receivable" ||
+  a.entity?.role === "customer"`.
+  - `receivable.forNew(doc, s)` → `{ code, own }`: what a new invoice
+    debits. The customer's own account (`ctx.entities.account(entity,
+    "customer", currency)`, asked each time, never stored) when the
+    receivable setting is empty or names an account Ledger tagged
+    (`s.accounts[cur].receivable_tagged`, worked out in `loadSettings()`
+    from `listAccounts()`); with no tagged account at all Ledger makes one.
+    A chosen account that is NOT tagged is kept as chosen (one account for
+    all customers, entries tagged `customer` as before; the README says
+    so). No entity, an entity that isn't a customer, or an older Ledger:
+    the receivables account. An inactive entity still gets its own account;
+    the entry then carries no `entity_id` (`entityOf()`).
+  - `receivable.ofInvoice(doc, s)`: where a payment is credited, the
+    account the invoice's receivable line sits in now, read from its entry
+    (the debit with memo `Invoice <number>`): Ledger's update moved old
+    invoices' lines into customers' accounts, a person may move one, the
+    setting may have changed. `recordPayment` ("bank") and deposit matching
+    (`docs.receivableOf(id)`) use it. Voids and removed payments reverse
+    the entry, which mirrors its accounts.
+  - Deposit matching (`postingFor` in `payments.mjs`): credited to the
+    invoice's account, or to any customer's own account → nothing posted;
+    otherwise one entry moves it to the invoice's account. A deposit
+    sitting in the tagged Accounts receivable (no customer) is moved with
+    `plain: true`: the entry is posted WITHOUT `entity_id`, because Ledger
+    routes every line in the tagged account of an entry with a customer to
+    that customer's account, and both lines would land in the same place.
+  - The `customer` tag: an invoice posted to the customer's own account
+    gets none; `issueInvoice` writes `customer:<entity id>` straight into
+    `documents.entry_tags` (what Sales knows the entry to say), so
+    `tags.sync()` has nothing to set. Ledger's migration deleted the tags
+    of old invoices and moved their lines; their `entry_tags` still say
+    `customer:<id>`, which is still true, so nothing is re-added or
+    removed. Where `entry_tags` lacks it, the sync's `ctx.tags.set(entry,
+    "customer", { entity_id })` makes Ledger move a line left in Accounts
+    receivable into the customer's account (or keep a real tag when the
+    entry has no such line: an untagged account of the user's own, an older
+    Ledger). Don't add code that expects a stored customer tag
+    (`ctx.tags.of` returns it with `id: 0` and `account_code`).
+  - `GET /customers/:id` returns `ledger_owed` (`entity.accounts[]`,
+    `owed_cents` per currency; null on an older Ledger), shown as "Owed in
+    the books" next to Sales' own "Outstanding". Accounts with `entity`
+    are left out of `GET /accounts`, refused by `checkAccount()` and never
+    read for billable costs.
+  - Tests: `test/receivables.test.mjs` on `fakeBooks()` in `test/fake.mjs`
+    (in-memory books: `own: true` is Ledger ≥ 0.31.0, `own: false` an older
+    one, `update()` plays Ledger's migration). Keep both paths covered.
 - Billable items: Sales' own clearing account (`ctx.ledger.clearingAccount`,
   key `billable_costs`, "Billable costs to recharge", asset, one per
   currency; Ledger ≥ 0.20.0) is always looked in, plus the optional
@@ -197,7 +249,8 @@ payments to the books.
   which the unit tests rely on): `server/tags.mjs`. `tags.sync(did?)`
   compares, in SQL, what each issued invoice's entry should carry
   (`customer:<entity id>`, `billed`, `paid`, `overdue`; void: only the
-  customer) with `documents.entry_tags` (what Sales knows to be on it) and
+  customer; on Ledger ≥ 0.31.0 the account says who the customer is, see
+  the receivables bullet) with `documents.entry_tags` (what Sales knows to be on it) and
   calls `ctx.tags.set` / `remove` only for the difference; it runs for one
   invoice right after issue, payment, payment removal and void, and for
   all of them in the dashboard sync (startup, hourly, after any change),
@@ -385,7 +438,8 @@ payments to the books.
   applies them from the Payments tab, possibly with changed amounts: AI only
   proposes. A rejected deposit isn't suggested again. Both go through `recordPayment` / `deletePayment`
   in `documents.mjs`. A matched deposit is linked (`matched_entry_id`); Sales
-  posts only a move from the deposit's credit account to receivable.
+  posts only a move from the deposit's credit account to the account the
+  invoice's receivable line sits in (see the receivables bullet).
 - Organizations: documents and `ctx.settings` are per organization (Ledger
   ≥ 0.11.1). Background work (dashboard sync, startup recovery, the one-time
   settings copy) runs through `ctx.orgs.forEach`; a change syncs only its

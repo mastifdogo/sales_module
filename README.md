@@ -62,8 +62,10 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
   dashboard shows how many wait): change the amounts if needed, then
   **Apply** or **Reject**. Nothing is applied until a person approves it; a
   rejected deposit isn't suggested again. Applying never counts the money twice:
-  a deposit credited to receivable is just linked; one sitting in another
-  account (e.g. suspense) is moved to receivable with one entry.
+  a deposit already credited to the customer's account (or to receivables,
+  on a Ledger before 0.31.0) is just linked; one sitting in another account
+  (e.g. suspense, or Accounts receivable with no customer) is moved to the
+  customer's account with one entry.
 - **put reminders on Ledger's dashboard**: a notification when invoices are
   overdue, a to-do for each issued invoice that hasn't been emailed, and a
   to-do to follow up on each sent quote or estimate. They clear themselves
@@ -89,11 +91,14 @@ in Ledger's sidebar as **Sales**, with a hammer icon, and lets you:
 - **find things from Ledger's search bar**: customers, and invoices, quotes
   and estimates by number, customer or PO number.
 - optionally **post to the books**: issuing an invoice posts Dr accounts
-  receivable (the account chosen in the settings, or else the one tagged
-  "Accounts receivable" in Ledger, 0.30.0 and later),
-  Cr each line's category revenue account and Cr each tax's payable account.
-  A payment posts Dr bank / Cr receivable. Voiding an invoice or removing a
-  payment reverses its entry. Quotes and estimates are never posted.
+  receivable, Cr each line's category revenue account and Cr each tax's
+  payable account. A payment posts Dr bank / Cr receivable. Voiding an
+  invoice or removing a payment reverses its entry. Quotes and estimates
+  are never posted. "Receivable" is **the customer's own account** under
+  Accounts receivable (Ledger 0.31.0 and later; see
+  [What customers owe](#what-customers-owe-in-the-books)); on an older
+  Ledger, the account chosen in the settings, or else the one tagged
+  "Accounts receivable" (0.30.0 and later).
   Every entry Sales posts (and every bank deposit it applies) is linked to
   its invoice: Ledger shows "Invoice INV-0031 · Acme" on the entry and in
   the journal, and the link opens the invoice in Sales.
@@ -130,6 +135,20 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.23.0**: customers' own accounts (Ledger 0.31.0). Ledger now keeps an
+  account for each customer under Accounts receivable, and what a customer
+  owes is its balance. Sales posts there: an invoice debits the customer's
+  account, a payment credits it, a void reverses it in the same account, and
+  a matched deposit is moved into it. Such entries are no longer tagged
+  with the customer (the account says whose they are; Ledger still shows
+  the tag). Invoices issued before need nothing done: Ledger's update moves
+  their receivable lines into the customers' accounts, and payments and
+  voids follow the line wherever it sits. The customer page shows **Owed in
+  the books**, Ledger's own number. A receivables account of your own that
+  Ledger hasn't tagged "Accounts receivable" is kept as chosen (see
+  [What customers owe](#what-customers-owe-in-the-books)). Customers' and
+  vendors' own accounts are never offered as the account of a category or a
+  tax. Nothing changes on an older Ledger.
 - **0.22.0**: invoices are posted to accounts receivable without choosing
   the account: with posting on and no receivables account chosen under
   Settings → Sales → Accounts, the account tagged "Accounts receivable" in
@@ -345,6 +364,40 @@ pick them): **Billable costs to recharge** (asset) and **Customer credits to
 apply** (liability, for credit memos). Both return to zero as invoices take
 what's in them.
 
+### What customers owe, in the books
+
+With Ledger 0.31.0 and later, every customer has an account of their own
+under Accounts receivable (one per currency, e.g. `1200-7 Acme`; Ledger
+makes it the first time something is posted for them), and its balance is
+what the customer owes.
+
+- **Receivables left empty in the settings** (the usual setup), or set to
+  the account Ledger has tagged "Accounts receivable": an invoice debits
+  the customer's own account, a payment credits it, a void reverses it
+  there. If the books have no Accounts receivable yet, Ledger makes it.
+  A deposit applied from the Payments tab that sits in another account is
+  moved into the customer's account; one already credited to a customer's
+  account is only linked.
+- **Receivables set to an account of your own that isn't tagged "Accounts
+  receivable" in Ledger** (say `1250 Trade debtors`): Sales keeps your
+  choice. Invoices and payments go to that one account for all customers
+  together, their entries are tagged with the customer as before, and
+  Ledger keeps no per-customer balance for them. To get customers' own
+  accounts, clear the setting, or tag that account "Accounts receivable"
+  on Ledger's Accounts page.
+- A payment always goes where its invoice's receivable line sits (read from
+  the invoice's entry), so an invoice issued under an earlier setting, or
+  moved by Ledger's update, is settled in the same account.
+- The customer page shows **Outstanding** (Sales' open invoices) and **Owed
+  in the books** (the balance of the customer's account in Ledger). They
+  differ when something was posted to the customer's account outside
+  Sales, or a deposit of theirs isn't applied to an invoice yet.
+- An unapplied credit memo sits in "Customer credits to apply", not in the
+  customer's account, until an invoice takes it.
+- Customers who aren't in Ledger's customer list yet (from before 0.7.0,
+  not moved) have no account of their own: their invoices post to Accounts
+  receivable itself.
+
 ## Set up
 
 Setup is for admins (Ledger's user roles). Bookkeepers create and send
@@ -352,8 +405,9 @@ documents, record payments and manage customers; viewers can only look.
 
 1. **Settings → Sales** (Ledger's settings form for the module):
    - **Your business**: name, address, GST/HST registration number, footer.
-   - **Ledger posting** (optional): turn it on and enter the receivable,
-     default revenue and bank account codes for each currency.
+   - **Ledger posting** (optional): turn it on and choose the default
+     revenue and bank accounts for each currency. Leave receivables empty:
+     each customer's own account under Accounts receivable is used.
    - **Email**: *Ledger's mailbox* (the default). *Sales' own mail server
      settings* remain for setups from before Ledger had a mailbox.
    - **Billable items** accounts (optional).
@@ -397,7 +451,9 @@ secret field in Ledger's form and is never sent back to the browser.
   it first. Use *Record payment* for payments and *Void* to cancel.
 - **Tags in Ledger** (Ledger 0.23.0 or newer, with posting on): the journal
   entry of an issued invoice carries Ledger's shared tags, which every
-  module and the journal read the same way: **customer** (who it is with),
+  module and the journal read the same way: **customer** (who it is with;
+  from Ledger 0.31.0 that is read from the customer's own account the
+  invoice is posted to, so Sales sets no tag for it),
   **billed**, **paid** once it is paid in full, **overdue** while it is
   past due and unpaid. Sales keeps them in step with the invoice, hourly
   and after every change, and tags the entries of billable costs **billed**
