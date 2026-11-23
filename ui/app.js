@@ -243,8 +243,11 @@ const routes = [
 	[/^\/payments$/, () => paymentsView()],
 ];
 
+// The view is the address after "#" (#/invoices/31), so Ledger's Back button
+// steps through the views (Ledger ≥ 0.35.4) and the pages have no back links.
+// Without it: what the link asked for (below), else the invoices.
 async function route() {
-	const [path, query] = location.hash.slice(1).split("?");
+	const [path, query] = (location.hash.length > 1 ? location.hash : openFromQuery()).slice(1).split("?");
 	const qs = new URLSearchParams(query ?? "");
 	const tab = (path.split("/")[1] || "invoices").toLowerCase();
 	for (const a of document.querySelectorAll(".tabs:not(.subtabs) a")) a.classList.toggle("active", a.dataset.tab === tab);
@@ -259,7 +262,7 @@ async function route() {
 		}
 		return;
 	}
-	render(h("h1", {}, "Not found"), h("p", {}, h("a", { href: "#/invoices" }, "Back to invoices")));
+	render(h("h1", {}, "Not found"), h("p", {}, h("a", { href: "#/invoices" }, "See the invoices")));
 }
 const go = (hash) => (location.hash === hash ? route() : (location.hash = hash));
 /** A table row that opens `hash` when clicked, or with Enter from the keyboard (the whole line is the link). */
@@ -1026,7 +1029,6 @@ async function creditMemoView(id) {
 	const reload = () => creditMemoView(id).catch(fail);
 	const act = (label, fn, attrs = {}) => h("button", { ...attrs, onclick: (e) => busy(e.currentTarget, fn) }, label);
 	render(
-		h("p", {}, h("a", { href: "#/credit-memos" }, "← Credit memos")),
 		h("h1", {}, `Credit memo ${m.number}`, memoBadge(m)),
 		h(
 			"div",
@@ -1216,7 +1218,6 @@ async function projectView(id) {
 		});
 
 	render(
-		h("p", {}, h("a", { href: "#/projects" }, "← Projects")),
 		h("h1", {}, p.name, h("span", { class: `badge ${active ? "open" : "void"}` }, p.status)),
 		h("p", {}, "For ", h("a", { href: `#/customers/${p.customer_id}` }, p.customer_name), p.customer_company ? h("span", { class: "muted" }, ` (${p.customer_company})`) : null),
 		h("div", { class: "actions" }, actions),
@@ -1379,7 +1380,6 @@ async function docView(kind, id) {
 	].filter(Boolean);
 
 	render(
-		h("p", {}, h("a", { href: `#/${K.plural}` }, `← ${K.title}`)),
 		h("h1", {}, `${K.label} ${doc.number}`, badge(doc)),
 		h("div", { class: "actions" }, actions),
 		h(
@@ -1610,7 +1610,7 @@ async function moveView() {
 	const [plan, settings] = await Promise.all([api("/customers/move"), api("/settings")]);
 	const canEdit = settings.role !== "viewer";
 	if (plan.pending === 0) {
-		return render(h("p", {}, h("a", { href: "#/customers" }, "← Customers")), h("h1", {}, "Customers are in Ledger's list"), h("p", { class: "muted" }, "Every Sales customer is in Ledger's shared list of customers and vendors."));
+		return render(h("h1", {}, "Customers are in Ledger's list"), h("p", { class: "muted" }, "Every Sales customer is in Ledger's shared list of customers and vendors."));
 	}
 	const links = plan.data.filter((r) => r.action === "link").length;
 	const what = (r) =>
@@ -1618,7 +1618,6 @@ async function moveView() {
 			? `added to the list${r.archived ? " (inactive, as it's archived)" : ""}`
 			: `joins ${r.entity.name}${r.entity.is_customer ? "" : r.entity.is_vendor ? " (a vendor; becomes a customer too)" : ""}`;
 	render(
-		h("p", {}, h("a", { href: "#/customers" }, "← Customers")),
 		h("h1", {}, "Move customers into Ledger's list"),
 		h(
 			"p",
@@ -1734,7 +1733,6 @@ async function importView(id) {
 				)
 			: h("p", { class: "muted" }, isOpen ? "Only admins and bookkeepers can add customers." : f.result || `This list was ${f.status}.`);
 	render(
-		h("p", {}, h("a", { href: "#/customers" }, "← Customers")),
 		h("h1", {}, `Customer list from ${f.source || f.filename}`),
 		h(
 			"p",
@@ -1841,7 +1839,6 @@ async function customerView(id) {
 	const how = (p) => (p.matched_entry_id ? "matched deposit" : p.journal_entry_id ? "posted" : "recorded");
 
 	render(
-		h("p", {}, h("a", { href: "#/customers" }, "← Customers")),
 		h("h1", {}, c.name, c.archived ? h("span", { class: "badge void" }, "archived") : null),
 		h(
 			"div",
@@ -2474,12 +2471,11 @@ async function setupView(section) {
 const OPEN_ROUTE = /^[a-z]+(\/[a-z]+)?(\/\d+)?(\?[a-z_]+=[a-z0-9_]+)?$/;
 function openFromQuery() {
 	const open = new URLSearchParams(location.search).get("open") ?? "";
-	if (OPEN_ROUTE.test(open) && !location.hash) history.replaceState(null, "", `${location.pathname}#/${open}`);
+	return OPEN_ROUTE.test(open) ? `#/${open}` : "";
 }
 
 if (document.body.dataset.page === "setup") {
 	setupView(document.body.dataset.section).catch(fail);
 } else {
-	openFromQuery();
 	route();
 }

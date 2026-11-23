@@ -109,7 +109,7 @@ side pane.
 
 ## Install
 
-Needs **Ledger 0.27.0 or newer** (the one file store with tags on files and data kept with a file, shared tags on journal entries, root mode, clearing accounts, renumbered accounts, Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
+Needs **Ledger 0.35.4 or newer** (its Back button steps through the module's views, the one file store with tags on files and data kept with a file, shared tags on journal entries, root mode, clearing accounts, renumbered accounts, Documents, the shared mailbox, the shared customer list, sub-accounts, Import from CSV, customer lists from Ledger's migration,
 "+ New account…", journal entry links, settings per organization, plus the
 settings form, Gmail, search and user roles from earlier versions). In
 Ledger, open **Settings → Modules**, enter `mastifdogo/sales_module` and add it.
@@ -135,6 +135,9 @@ businesses, invoice separately. Each organization's admins fill in
 
 ### Changes
 
+- **0.23.2**: no back links on the pages ("← Customers", "← Invoices" and
+  the like are gone): Ledger's own Back button, in its sidebar, now steps
+  through the views of Sales as through Ledger's pages. Needs Ledger 0.35.4.
 - **0.23.1**: bank and credit card accounts (tagged chequing, savings or
   credit card in Ledger) come first in every account list, then the rest.
 - **0.23.0**: customers' own accounts (Ledger 0.31.0). Ledger now keeps an
